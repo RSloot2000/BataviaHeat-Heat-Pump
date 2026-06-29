@@ -56,12 +56,12 @@
 | M19 | Custom heating outdoor temp 2 | °C | -25 - 35 | **6434** |
 | M20 | Custom heating outlet temp 1 | °C | 25-65 | **6435** |
 | M21 | Custom heating outlet temp 2 | °C | 25-65 | **6436** |
-| M35 | Min outdoor temp auto cooling | °C | 20-29 | **6450?** |
-| M36 | Max outdoor temp auto cooling | °C | 10-17 | **6451?** |
-| M37 | Holiday away heating | °C | 20-25 | **6452?** |
-| M38 | Holiday away DHW | °C | 20-25 | **6453?** |
-| M39 | Auxiliary electric heater setting | - | 0=Off / 1=Heating only / 2=DHW only / 3=Heating+DHW | |
-| M40 | External heat source | - | 0=Off / 1=Heating only / 2=DHW only / 3=Heating+DHW | 6440 |
+| M35 | Min outdoor temp auto cooling | °C | 20-29 | **7184** |
+| M36 | Max outdoor temp auto cooling | °C | 10-17 | **7185** |
+| M37 | Holiday away heating | °C | 20-25 | **7186** |
+| M38 | Holiday away DHW | °C | 20-25 | **7187** |
+| M39 | Auxiliary electric heater setting | - | 0=Off / 1=Heating only / 2=DHW only / 3=Heating+DHW | **7189** |
+| M40 | External heat source | - | 0=Off / 1=Heating only / 2=DHW only / 3=Heating+DHW | **7190** |
 | M55 | Underfloor heating preheat temp | °C | 25-35 | 6455 |
 | M56 | Underfloor heating preheat interval | min | 10-40 | 6456 |
 | M57 | Underfloor heating preheat duration | hr | 48-96 | 6457 |
@@ -84,15 +84,15 @@
 | Code | Parameter | Unit | Range / Options | HR address |
 |------|-----------|------|-----------------|------------|
 | P01 | Water pump operating mode | - | 0=Continuous / 1=Stop at temp / 2=Intermittent | **6472** |
-| P02 | Water pump control type | - | 1=Speed / 2=Flow / 3=ON-OFF / 4=Power | ? |
-| P03 | Water pump target speed | rpm | 1000-4500 | ? |
-| P04 | Water pump manufacturer | - | 0-4 | ? |
-| P05 | Water pump target flow | L/hr | 0-4500 | ? |
-| P06 | Lower return water pump interval | min | 5-120 | ? |
-| P07 | Lower return pump sterilization | - | 0=Off / 1=On | ? |
-| P08 | Lower return pump timed | - | 0=Off / 1=On | ? |
-| P09 | Water pump intermittent stop time | min | ? | ? |
-| P20 | Water pump intermittent running time | min | ? | ? |
+| P02 | Water pump control type | - | 1=Speed / 2=Flow / 3=ON-OFF / 4=Power | **7232** |
+| P03 | Water pump target speed | rpm | 1000-4500 | **7234** |
+| P04 | Water pump manufacturer | - | 0-4 | **7235** |
+| P05 | Water pump target flow | L/hr | 0-4500 | **7236** |
+| P06 | Lower return water pump interval | min | 5-120 | **7237** |
+| P07 | Lower return pump sterilization | - | 0=Off / 1=On | **7238** |
+| P08 | Lower return pump timed | - | 0=Off / 1=On | **7239** |
+| P09 | Water pump intermittent stop time | min | ? | **6507** |
+| P20 | Water pump intermittent running time | min | ? | **6511** |
 
 ## G-series: Sterilization (DHW)
 
@@ -515,6 +515,13 @@ The three changes (M02=35, M11=17, P01=1) plus the optional M21=38 resulted in:
 | HR[6435] | Custom heating outlet temp 1 | M20 | 25–65°C | ✓ number entity |
 | HR[6436] | Custom heating outlet temp 2 | M21 | 25–65°C | ✓ number entity |
 | HR[6465] | Power mode | N01 | 0–3 | ✓ select entity |
+| HR[7184-7187] | M35-M38 cool/holiday | M35-M38 | var. | ✓ number entity |
+| HR[7189-7190] | Aux/ext heat source | M39-M40 | 0–3 | ✓ select entity |
+| HR[6472] | Water pump operating mode | P01 | 0–2 | ✓ select entity |
+| HR[7232] | Water pump control type | P02 | 1–4 | ✓ select entity |
+| HR[7234-7237] | Speed/mfr/flow/interval | P03-P06 | var. | ✓ number entity |
+| HR[7238-7239] | Steril./timed return pump | P07-P08 | 0–1 | ✓ select entity |
+| HR[6507], HR[6511] | Pump stop/run time | P09, P20 | min | ✓ number entity |
 
 ### Holding Registers — NOT reliable as sensor
 
@@ -601,8 +608,8 @@ Possible future location: range HR[300-699] or HR[1400-6399] (not yet scanned).
 | sensor | All IR and HR sensors + thermal_power + energy + COP | FC04 + FC03 |
 | binary_sensor | compressor_running (HR[1283]) | FC03 |
 | switch | unit_power, silent_mode, silent_level_2 | FC05 coils |
-| number | M02, M11, M18-M21 (heating curve parameters) | FC06 |
-| select | N01 power_mode (HR[6465]) | FC06 |
+| number | M02, M11, M18-M21, M35-M38, P03-P06, P09, P20 | FC06 |
+| select | N01 power_mode, M39, M40, P01, P02, P07, P08 | FC06 |
 | climate | Target temp (HR[6402]), current temp (HR[776]), status (HR[768]) | FC03/FC06 |
 
 ### Bulk-Read Strategy (coordinator.py)
@@ -618,6 +625,9 @@ Possible future location: range HR[300-699] or HR[1400-6399] (not yet scanned).
 | 3 | HR[6402] | 1 register (max heating temp) |
 | 4 | HR[6426-6436] | 11 registers (heating curve parameters) |
 | 5 | HR[6465] | 1 register (power mode) |
+| 6 | HR[7184-7190] | 7 registers (M35-M40 cool/holiday/aux/ext) |
+| 7 | HR[6472]+HR[6507]+HR[6511] | P01, P09, P20 (separate) |
+| 8 | HR[7232-7239] | 8 registers (P02-P08 pump control type) |
 
 **FC04 — Input registers:**
 
