@@ -4,7 +4,7 @@
 
 > **🚧 This project is in early development.** Expect breaking changes, incomplete features and undiscovered registers. Use at your own risk and please report any issues you encounter.
 
-Custom Home Assistant integration for the **BataviaHeat R290 3–8 kW Monobloc** heat pump via Modbus TCP or RTU (Serial).
+Custom Home Assistant integration for the **BataviaHeat R290 3–8 kW Monobloc** heat pump via DR164 gateway (Modbus TCP), ESP32 proxy (Modbus TCP) or RTU (Serial).
 
 ## Compatibility
 
@@ -48,7 +48,8 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
 - **3 switches:** unit power, silent mode, silent level 2 (pulse-coil based)
 - **6 number entities:** heating curve (stooklijn) parameters and temperature limits
 - **10-second polling interval** via Modbus TCP or RTU (Serial)
-- **Dual connection support:** Modbus TCP (e.g. DR164 WiFi gateway) or Modbus RTU via USB RS-485 adapter
+- **Triple connection support:** DR164 WiFi gateway (Modbus TCP), ESP32-S3 proxy (Modbus TCP) or Modbus RTU via USB RS-485 adapter
+- **Optional register offload:** push raw registers to a NAS/HTTP endpoint for later decoding (disabled by default)
 - **Connection failure resilience:** COP calculations remain accurate after network outages
 
 ## Hardware Requirements
@@ -57,10 +58,11 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
 |-----------|-------------|
 | Heat pump | BataviaHeat R290 3–8 kW Monobloc |
 | Modbus gateway (TCP) | DR164 RS485-to-WiFi converter (or any Modbus TCP gateway) |
+| ESP32 proxy (TCP) | ESP32-S3 running the BataviaHeat Modbus-TCP proxy firmware |
 | USB adapter (RTU) | Any USB RS-485 adapter (e.g. FTDI, CH340-based) |
 | Wiring | Gateway / adapter connected to the heat pump's RS-485 port (A+ to A+, B− to B−) |
 
-> **Choose one connection method:** Modbus TCP (wireless via gateway) **or** Modbus RTU (direct USB serial connection to your Home Assistant host).
+> **Choose one connection method:** DR164 gateway (Modbus TCP), ESP32 proxy (Modbus TCP) **or** Modbus RTU (direct USB serial connection to your Home Assistant host).
 
 > **Important:** The RS-485 bus supports only one master. Disconnect the tablet controller from the bus before using this integration, or use the secondary RS-485 port located on the mainboard of the heatpump.
 
@@ -76,6 +78,8 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
 4. Click **Download**
 5. Restart Home Assistant
 
+> **Stable vs beta:** HACS installs the latest tagged **release** by default. To test the newest changes, enable **Show beta versions** in the integration's download dialog — pre-release tags are served as beta. Stay on releases for everyday use.
+
 ### Manual
 
 1. Copy the `custom_components/batavia_heat` folder into your Home Assistant `config/custom_components/` directory
@@ -85,14 +89,23 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
 
 1. Go to **Settings → Devices & Services → Add Integration**
 2. Search for **BataviaHeat R290**
-3. Select your connection type: **Modbus TCP** or **Modbus RTU (Serial)**
+3. Select your connection type: **DR164 gateway (Modbus TCP)**, **ESP32 proxy (Modbus TCP)** or **Modbus RTU (Serial)**
 
-### Modbus TCP
+### DR164 gateway (Modbus TCP)
 
 4. Enter the connection details:
-   - **Host:** IP address of the Modbus TCP gateway
+   - **Host:** IP address of the DR164 gateway
    - **TCP port:** Gateway TCP port (default: `502`)
    - **Slave ID:** Modbus device address (default: `1`)
+
+### ESP32 proxy (Modbus TCP)
+
+4. Enter the connection details:
+   - **Host:** IP address you assigned to the ESP32 proxy
+   - **TCP port:** Proxy TCP port (default: `502`)
+   - **Slave ID:** Modbus device address (default: `1`)
+
+> No IP addresses are hardcoded — you supply the address of your own gateway/proxy during setup.
 
 ### Modbus RTU (Serial)
 
@@ -109,6 +122,14 @@ After initial setup, you can optionally link an external kWh meter to enable COP
 2. Find **BataviaHeat R290** and click **Configure**
 3. Select your electricity meter entity (must have `device_class: energy`)
 4. Save, the integration reloads automatically and creates six COP sensors
+
+### Options (register offload)
+
+Optionally push every register snapshot to a NAS/HTTP endpoint for later decoding (disabled by default):
+
+1. Go to **Settings → Devices & Services** → **BataviaHeat R290** → **Configure**
+2. Enable **Register offload** and enter an **Offload URL** (an HTTP endpoint that accepts a JSON POST)
+3. Leave the URL empty to disable. Failures are logged and never interrupt normal updates
 
 ## Entities
 
