@@ -80,6 +80,7 @@
       "total_water_outlet_temperature": { "name": "Total water outlet temperature" },
       "buffer_inlet_temperature": { "name": "Buffer inlet temperature" },
       "buffer_outlet_temperature": { "name": "Buffer outlet temperature" },
+      "silent_mode_state": { "name": "Silent mode state" },
       "thermal_power": { "name": "Thermal power" },
       "energy_delivered": { "name": "Energy delivered" },
       "cop_current": { "name": "COP (current)" },
@@ -90,15 +91,37 @@
       "cop_alltime": { "name": "COP all time" }
     },
     "binary_sensor": {
-      "compressor_running": { "name": "Compressor running" }
+      "compressor_running": { "name": "Compressor running" },
+      "unit_power_state": { "name": "Unit power state" }
     },
     "number": {
+      "cooling_setpoint_temperature": { "name": "Cooling setpoint temperature" },
       "max_heating_temperature": { "name": "Max heating temperature" },
-      "heating_curve_mode": { "name": "Heating curve mode" },
+      "cooling_target_room_temperature": { "name": "Cooling target room temperature" },
+      "heating_target_room_temperature": { "name": "Heating target room temperature" },
+      "heating_setpoint_zone_b": { "name": "Heating setpoint zone B" },
+      "cooling_curve_zone_a": { "name": "Cooling curve zone A" },
+      "heating_curve_mode": { "name": "Heating curve zone A" },
+      "cooling_curve_zone_b": { "name": "Cooling curve zone B" },
+      "heating_curve_zone_b": { "name": "Heating curve zone B" },
+      "cool_custom_outdoor_temp_1": { "name": "Cool custom outdoor temp 1" },
+      "cool_custom_outdoor_temp_2": { "name": "Cool custom outdoor temp 2" },
+      "cool_custom_outlet_temp_1": { "name": "Cool custom outlet temp 1" },
+      "cool_custom_outlet_temp_2": { "name": "Cool custom outlet temp 2" },
       "curve_outdoor_temp_high": { "name": "Curve outdoor temp high" },
       "curve_outdoor_temp_low": { "name": "Curve outdoor temp low" },
       "curve_water_temp_mild": { "name": "Curve water temp mild" },
-      "curve_water_temp_cold": { "name": "Curve water temp cold" }
+      "curve_water_temp_cold": { "name": "Curve water temp cold" },
+      "auto_cool_min_ambient": { "name": "Auto-cool min ambient" },
+      "auto_cool_max_ambient": { "name": "Auto-cool max ambient" },
+      "holiday_heating_temperature": { "name": "Holiday heating temperature" },
+      "holiday_dhw_temperature": { "name": "Holiday DHW temperature" },
+      "pump_target_speed_setpoint": { "name": "Pump target speed setpoint" },
+      "pump_manufacturer": { "name": "Pump manufacturer" },
+      "pump_target_flow_setpoint": { "name": "Pump target flow setpoint" },
+      "lower_return_pump_interval": { "name": "Lower return pump interval" },
+      "pump_intermittent_stop_time": { "name": "Pump intermittent stop time" },
+      "pump_intermittent_run_time": { "name": "Pump intermittent run time" }
     },
     "switch": {
       "unit_power": { "name": "Unit power" },
@@ -113,6 +136,32 @@
           "powerful": "Powerful",
           "eco": "Eco",
           "auto": "Auto"
+        }
+      },
+      "working_mode": {
+        "name": "Working mode",
+        "state": {
+          "cool": "Cool",
+          "heat": "Heat",
+          "auto": "Auto"
+        }
+      },
+      "auxiliary_heater_mode": {
+        "name": "Auxiliary heater mode",
+        "state": {
+          "off": "Off",
+          "heating_only": "Heating only",
+          "dhw_only": "DHW only",
+          "heating_and_dhw": "Heating + DHW"
+        }
+      },
+      "external_heat_source_mode": {
+        "name": "External heat source mode",
+        "state": {
+          "off": "Off",
+          "heating_only": "Heating only",
+          "dhw_only": "DHW only",
+          "heating_and_dhw": "Heating + DHW"
         }
       }
     },

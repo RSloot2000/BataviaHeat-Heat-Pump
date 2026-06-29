@@ -56,12 +56,12 @@
 | M19 | Aangepaste verwarmingsomgevingstemp. 2 | °C | −25 – 35 | **6434** |
 | M20 | Aangepaste verwarmingsuitlaattemp. 1 | °C | 25–65 | **6435** |
 | M21 | Aangepaste verwarmingsuitlaattemp. 2 | °C | 25–65 | **6436** |
-| M35 | Min. omgevingstemp. auto koeling | °C | 20–29 | **6450?** |
-| M36 | Max. omgevingstemp. auto koeling | °C | 10–17 | **6451?** |
-| M37 | Vakantie weg verwarming | °C | 20–25 | **6452?** |
-| M38 | Vakantie weg warm water | °C | 20–25 | **6453?** |
-| M39 | Auxilliary electric heater setting | - | 0=Uit / 1=Alleen verwarmen / 2=Alleen DHW / 3=Verwarmen+DHW | |
-| M40 | Externe warmtebron | — | 0=Uit / 1=Alleen verwarmen / 2=Alleen DHW / 3=Verwarmen+DHW | 6440 |
+| M35 | Min. omgevingstemp. auto koeling | °C | 20–29 | **7184** |
+| M36 | Max. omgevingstemp. auto koeling | °C | 10–17 | **7185** |
+| M37 | Vakantie weg verwarming | °C | 20–25 | **7186** |
+| M38 | Vakantie weg warm water | °C | 20–25 | **7187** |
+| M39 | Auxilliary electric heater setting | - | 0=Uit / 1=Alleen verwarmen / 2=Alleen DHW / 3=Verwarmen+DHW | **7189** |
+| M40 | Externe warmtebron | — | 0=Uit / 1=Alleen verwarmen / 2=Alleen DHW / 3=Verwarmen+DHW | **7190** |
 | M55 | Voorverwarmingstemp. vloerverwarming | °C | 25–35 | 6455 |
 | M56 | Voorverwarmingsinterval vloerverwarming | min | 10–40 | 6456 |
 | M57 | Voorverwarmingstijd vloerverwarming | uur | 48–96 | 6457 |
@@ -84,15 +84,15 @@
 | Code | Parameter | Eenheid | Bereik / Opties | HR-adres |
 |------|-----------|---------|-----------------|----------|
 | P01 | Werkingsmodus waterpomp | — | 0=Blijf draaien / 1=Stop bij temp. / 2=Intermitterend | **6472** |
-| P02 | Waterpomp regeltype | — | 1=Snelheid / 2=Stroom / 3=AAN-UIT / 4=Vermogen | ? |
-| P03 | Doelsnelheid waterpomp | rpm | 1000–4500 | ? |
-| P04 | Fabrikant waterpomp | — | 0–4 | ? |
-| P05 | Doelstroom waterpomp | L/uur | 0–4500 | ? |
-| P06 | Onderste retourwaterpomp interval | min | 5–120 | ? |
-| P07 | Sterilisatie onderste retourpomp | — | 0=Uit / 1=Aan | ? |
-| P08 | Onderste retourpomp getimed | — | 0=Uit / 1=Aan | ? |
-| P09 | Water pump intermittent stop time | min | ? | ? |
-| P20 | Water pump intermittent running time | min | ? | ? |
+| P02 | Waterpomp regeltype | — | 1=Snelheid / 2=Stroom / 3=AAN-UIT / 4=Vermogen | **7232** |
+| P03 | Doelsnelheid waterpomp | rpm | 1000–4500 | **7234** |
+| P04 | Fabrikant waterpomp | — | 0–4 | **7235** |
+| P05 | Doelstroom waterpomp | L/uur | 0–4500 | **7236** |
+| P06 | Onderste retourwaterpomp interval | min | 5–120 | **7237** |
+| P07 | Sterilisatie onderste retourpomp | — | 0=Uit / 1=Aan | **7238** |
+| P08 | Onderste retourpomp getimed | — | 0=Uit / 1=Aan | **7239** |
+| P09 | Water pump intermittent stop time | min | ? | **6507** |
+| P20 | Water pump intermittent running time | min | ? | **6511** |
 
 ## G-serie: Sterilisatie (DHW)
 
@@ -515,6 +515,13 @@ De drie wijzigingen (M02=35, M11=17, P01=1) plus de optionele M21=38 resulteerde
 | HR[6435] | Custom verw. uitlaattemp. 1 | M20 | 25–65°C | ✓ number entity |
 | HR[6436] | Custom verw. uitlaattemp. 2 | M21 | 25–65°C | ✓ number entity |
 | HR[6465] | Power-modus | N01 | 0–3 | ✓ select entity |
+| HR[7184-7187] | M35-M38 koel/vakantie | M35-M38 | div. | ✓ number entity |
+| HR[7189-7190] | Aux/ext warmtebron | M39-M40 | 0–3 | ✓ select entity |
+| HR[6472] | Werkingsmodus waterpomp | P01 | 0–2 | ✓ select entity |
+| HR[7232] | Waterpomp regeltype | P02 | 1–4 | ✓ select entity |
+| HR[7234-7237] | Snelheid/fabr./flow/interval | P03-P06 | div. | ✓ number entity |
+| HR[7238-7239] | Steril./getimed retourpomp | P07-P08 | 0–1 | ✓ select entity |
+| HR[6507], HR[6511] | Pomp stop/loop tijd | P09, P20 | min | ✓ number entity |
 
 ### Holding Registers — NIET betrouwbaar als sensor
 
@@ -601,8 +608,8 @@ Mogelijke toekomstige locatie: bereik HR[300-699] of HR[1400-6399] (nog niet ges
 | sensor | Alle IR en HR sensoren + thermal_power + energy + COP | FC04 + FC03 |
 | binary_sensor | compressor_running (HR[1283]) | FC03 |
 | switch | unit_power, silent_mode, silent_level_2 | FC05 coils |
-| number | M02, M11, M18-M21 (stooklijn parameters) | FC06 |
-| select | N01 power_mode (HR[6465]) | FC06 |
+| number | M02, M11, M18-M21, M35-M38, P03-P06, P09, P20 | FC06 |
+| select | N01 power_mode, M39, M40, P01, P02, P07, P08 | FC06 |
 | climate | Target temp (HR[6402]), huidige temp (HR[776]), status (HR[768]) | FC03/FC06 |
 
 ### Bulk-read strategie (coordinator.py)
@@ -618,6 +625,9 @@ Mogelijke toekomstige locatie: bereik HR[300-699] of HR[1400-6399] (nog niet ges
 | 3 | HR[6402] | 1 register (max heating temp) |
 | 4 | HR[6426-6436] | 11 registers (stooklijn parameters) |
 | 5 | HR[6465] | 1 register (power mode) |
+| 6 | HR[7184-7190] | 7 registers (M35-M40 koel/vakantie/aux/ext) |
+| 7 | HR[6472]+HR[6507]+HR[6511] | P01, P09, P20 (los) |
+| 8 | HR[7232-7239] | 8 registers (P02-P08 pomp regeltype) |
 
 **FC04 — Input registers:**
 
