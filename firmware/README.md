@@ -40,3 +40,8 @@ The default slave ID is `1`, baud `9600` (8N1), TCP port `502`.
 In the HACS integration choose **ESP32 proxy (Modbus TCP)** and enter the IP
 address you assigned to this ESP32. Optional register offload is handled
 Home-Assistant-side, so no firmware change is needed for it.
+
+## Setup Example
+
+Custom PCB with an ESP32 devkit, a step down converter (12V->5V) and 2 waveshare RS485 to TTL converters
+![Custom PCB with an ESP32 devkit, a step down converter (12V->5V) and 2 waveshare RS485 to TTL converters](20260712_174357.jpg)
