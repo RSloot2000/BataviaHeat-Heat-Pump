@@ -7,7 +7,6 @@
   "documentation": "https://github.com/RSloot2000/BataviaHeat-Heat-Pump",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/RSloot2000/BataviaHeat-Heat-Pump/issues",
-  "logo": "https://raw.githubusercontent.com/RSloot2000/BataviaHeat-Heat-Pump/main/custom_components/batavia_heat/brand/logo.png",
   "requirements": ["pymodbus>=3.6.0"],
   "version": "0.4.1"
 }
