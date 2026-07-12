@@ -2,7 +2,7 @@
   "domain": "batavia_heat",
   "name": "BataviaHeat R290",
   "codeowners": ["@RSloot2000"],
-  "logo": "https://raw.githubusercontent.com/RSloot2000/BataviaHeat-R290-Modbus/main/custom_components/batavia_heat/brand/logo.png",
+  "logo": "https://raw.githubusercontent.com/RSloot2000/BataviaHeat-Heat-Pump/main/custom_components/batavia_heat/brand/logo.png",
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/RSloot2000/BataviaHeat-R290-Modbus",
