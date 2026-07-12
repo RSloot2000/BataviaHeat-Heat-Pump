@@ -1,4 +1,4 @@
-﻿"""Config flow for BataviaHeat R290 integration."""
+"""Config flow for BataviaHeat R290 integration."""
 from __future__ import annotations
 
 import logging
