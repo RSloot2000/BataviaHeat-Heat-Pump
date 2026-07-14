@@ -1,7 +1,8 @@
 # BataviaHeat R290 - Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
-[![Validate](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/actions/workflows/main.yml/badge.svg)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/actions/workflows/main.yml)
+[![HACS validation](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/actions/workflows/hacs.yml/badge.svg)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/actions/workflows/hacs.yml)
+[![Hassfest](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/actions/workflows/hassfest.yml/badge.svg)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/actions/workflows/hassfest.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/releases)
 [![GitHub Release Date](https://img.shields.io/github/release-date/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/releases)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.1.0%2B-blue?logo=home-assistant)
@@ -60,11 +61,13 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
 - **3 switches:** unit power, silent mode, silent level 2 (pulse-coil based)
 - **~20 number entities:** heating curve (stooklijn) parameters, temperature limits, auto-cool/holiday setpoints and water pump tuning
 - **Cloud connection (EcoHome app account):**
-  - 5 cloud-exclusive sensors: room temperature, compressor speed (rpm), hot water tank temperature, buffer top/bottom temperature
+  - 9 cloud-exclusive sensors: room temperature, compressor speed (rpm), hot water tank temperature, buffer top/bottom temperature, adjustable target temperature, solar boiler, underfloor heating inlet, pump fault info
+  - Full cloud climate control: HVAC mode (cool/heat/auto) and on/off work in cloud-only mode via the device-detail endpoint
   - Hot water setpoint (writable, 18–75 °C)
-  - Cloud select entities: silent mode, power mode (writable remotely)
-  - Cloud number entities: cooling setpoint, heating setpoint (zone A/B)
+  - Cloud select entities: silent mode, power mode, cooling/heating curves (zone A/B), light strip (writable remotely)
+  - Cloud number entities: cooling setpoint, heating setpoint (zone A/B), light strip brightness
   - Thermal power and COP calculations use cloud data when Modbus is unavailable
+- **Auto-hide:** sensors your unit does not have (e.g. DHW/solar/underfloor) hide themselves automatically and reappear if data returns
 - **10-second polling** via Modbus TCP or RTU; **30-second polling** via cloud
 - **Cloud + Modbus hybrid mode:** cloud is primary; Modbus provides faster updates and 40+ extra registers. Automatic fallback between the two
 - **Optional register offload:** push raw registers to a NAS/HTTP endpoint or local path for later decoding (disabled by default)
@@ -143,6 +146,16 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
    - **Slave ID:** Modbus device address (default: `1`)
    - **Baudrate:** Serial baudrate (default: `9600`, only change if needed)
 
+### Options (connection details)
+
+Modbus connection details can change over time (e.g. the DR164/ESP32 gets a new DHCP IP). You can update them **without removing the integration**:
+
+1. Go to **Settings → Devices & Services** → **BataviaHeat R290** → **Configure**
+2. For a TCP/ESP32 connection, edit **Host / IP address**, **TCP port** and **Slave ID**; for a serial connection, edit the **Serial port**, **Baudrate** and **Slave ID**
+3. Save — the integration reloads and reconnects using the new details
+
+> These fields only appear when a Modbus connection is configured (they are hidden for cloud-only setups).
+
 ### Options (kWh meter for COP)
 
 After initial setup, you can optionally link an external kWh meter to enable COP sensors:
@@ -214,6 +227,10 @@ Optionally push every register snapshot to a NAS/HTTP endpoint or local director
 | Hot water tank temperature | 2100 | °C | DHW storage tank temperature |
 | Buffer top temperature | 2104 | °C | Upper buffer tank sensor |
 | Buffer bottom temperature | 2105 | °C | Lower buffer tank sensor |
+| Adjustable target temperature | 2011 | °C | Current adjustable target temperature |
+| Solar boiler temperature | 2103 | °C | Solar boiler sensor (hidden when not present) |
+| Underfloor heating inlet temperature | 2111 | °C | Underfloor loop water inlet (hidden when not present) |
+| Pump fault info | 2195 | — | Inverter water-pump fault code (0 = OK) |
 
 When cloud is configured **without** a Modbus backup, the following additional cloud sensors are also created (they duplicate Modbus sensors but use cloud data):
 
@@ -270,6 +287,10 @@ Switches use **pulse-coils** (FC05, 0xFF00). Each function has a separate ON and
 |--------|--------------|---------|-------------|
 | Silent mode (cloud) | 1004 | Off, On | Enables/disables silent mode via cloud |
 | Power mode (cloud) | 1031 | Standard, Powerful, Eco, Auto | Power mode via cloud |
+| Cooling curve zone A (cloud) | 1046 | Off / Low temp 1–8 / High temp 1–8 / 2P / SOT | Cooling climate curve, zone A |
+| Heating curve zone A (cloud) | 1047 | Off / Low temp 1–8 / High temp 1–8 / 2P / SOT | Heating climate curve, zone A |
+| Heating curve zone B (cloud) | 1049 | Off / Low temp 1–8 / High temp 1–8 / 2P / SOT | Heating climate curve, zone B |
+| Light strip (cloud) | 4111 | Off, On | Display light strip (hidden when not present) |
 
 Cloud selects are always shown when cloud is configured. When Modbus is also configured, the local Modbus variants are preferred for reading; cloud selects provide a remote-write path independent of local connectivity.
 
@@ -289,9 +310,9 @@ Cloud selects are always shown when cloud is configured. When Modbus is also con
 | Auto-cool max ambient | HR[7185] | 10–17 °C | M36 max outdoor temp for auto cooling |
 | Holiday heating temperature | HR[7186] | 20–25 °C | M37 holiday-away heating |
 | Holiday DHW temperature | HR[7187] | 20–25 °C | M38 holiday-away DHW |
-| Pump target speed setpoint | HR[7234] | 1000–4500 rpm | P03 pump target speed |
+| Pump target speed setpoint | HR[7234] | 1000–6800 rpm | P03 pump target speed |
 | Pump manufacturer | HR[7235] | 0–8 | P04 pump manufacturer code |
-| Pump target flow setpoint | HR[7236] | 0–4500 L/h | P05 pump target flow |
+| Pump target flow setpoint | HR[7236] | 0–3600 L/h | P05 pump target flow |
 | Lower return pump interval | HR[7237] | 5–120 min | P06 lower-return pump interval |
 | Pump intermittent stop time | HR[6507] | min | P09 |
 | Pump intermittent run time | HR[6511] | min | P20 |
@@ -304,6 +325,7 @@ Cloud selects are always shown when cloud is configured. When Modbus is also con
 | Cooling setpoint (cloud) | 1022 | 10–35 °C | Cooling target (shown when Modbus not configured) |
 | Heating setpoint (cloud) | 1023 | 20–80 °C | Heating target via cloud (shown when Modbus not configured) |
 | Heating setpoint zone B (cloud) | 1029 | 20–70 °C | Zone B heating target (shown when Modbus not configured) |
+| Light strip brightness (cloud) | 4112 | 10–100 % | Display light strip brightness (hidden when not present) |
 
 The hot water setpoint (cloud address 1024) is always available via cloud — there is no direct Modbus equivalent in the current register map.
 
@@ -315,7 +337,7 @@ The heating curve registers use the M-register mapping: M00–M09 = HR[6400 + M]
 |--------|-------------|
 | Heat Pump | HVAC modes: **Off** / **Heat** / **Cool** / **Auto**, plus power-mode presets (standard/powerful/eco/auto). Current temperature from HR[1350] (T80 total water outlet), with fallback to cloud addresses 2189/2106 when Modbus is unavailable. Target temperature from HR[772] (calculated heating curve setpoint), with fallback to cloud address 1023. When the heating curve is off (M11 = 0), the target temperature can be adjusted via HR[6402] (M02). Working mode via HR[6400]; on/off via coils 1024/1025. |
 
-> **Cloud-only mode:** when no Modbus connection is configured, the climate entity shows current and target temperature (from cloud data) but HVAC mode and on/off state are unavailable. Use the cloud select entities (`cloud_silent_mode`, `cloud_power_mode`) and number entities (`cloud_heating_setpoint`) in that case.
+> **Cloud-only mode:** when no Modbus connection is configured, the climate entity is fully functional using the EcoHome cloud. Current and target temperature, **HVAC mode (cool/heat/auto)** and **on/off** are all available — mode is written via cloud address 1021 and power via 1017 (device-detail endpoint). The target temperature follows the active mode (cooling setpoint 1022 / heating setpoint 1023) and, as on the tablet, becomes read-only while a climate curve is active.
 
 ## COP calculation
 

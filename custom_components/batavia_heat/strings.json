@@ -89,8 +89,13 @@
     "step": {
       "init": {
         "title": "BataviaHeat R290 Options",
-        "description": "Optionally select your electricity meter to enable COP sensors. Leave empty to disable COP sensors. Optionally enable register offload to push raw registers to a NAS endpoint for later decoding.",
+        "description": "Update the Modbus connection details (e.g. a changed ESP32/DR164 IP address), select your electricity meter to enable COP sensors, and configure register offload.",
         "data": {
+          "host": "Host / IP address",
+          "tcp_port": "TCP port",
+          "slave_id": "Slave ID",
+          "serial_port": "Serial port",
+          "baudrate": "Baudrate",
           "energy_entity": "Electricity meter (kWh)",
           "offload_enabled": "Enable register offload",
           "offload_url": "Offload URL or local path (e.g. http://nas:8099/ or /share/snooper, leave empty to disable)",
@@ -150,7 +155,11 @@
       "cloud_pump_target_speed": { "name": "Pump target speed (cloud)" },
       "cloud_pump_flow_rate": { "name": "Pump flow rate (cloud)" },
       "cloud_pump_control_signal": { "name": "Pump control signal (cloud)" },
-      "cloud_pump_feedback_signal": { "name": "Pump feedback signal (cloud)" }
+      "cloud_pump_feedback_signal": { "name": "Pump feedback signal (cloud)" },
+      "cloud_adjustable_target_temperature": { "name": "Adjustable target temperature (cloud)" },
+      "cloud_solar_boiler_temperature": { "name": "Solar boiler temperature (cloud)" },
+      "cloud_floor_heating_inlet_temperature": { "name": "Underfloor heating inlet temperature (cloud)" },
+      "cloud_pump_fault_info": { "name": "Pump fault info (cloud)" }
     },
     "binary_sensor": {
       "compressor_running": { "name": "Compressor running" },
@@ -187,7 +196,8 @@
       "hot_water_setpoint": { "name": "Hot water setpoint" },
       "cloud_cooling_setpoint": { "name": "Cooling setpoint (cloud)" },
       "cloud_heating_setpoint": { "name": "Heating setpoint (cloud)" },
-      "cloud_heating_setpoint_zone_b": { "name": "Heating setpoint zone B (cloud)" }
+      "cloud_heating_setpoint_zone_b": { "name": "Heating setpoint zone B (cloud)" },
+      "cloud_light_strip_brightness": { "name": "Light strip brightness (cloud)" }
     },
     "switch": {
       "unit_power": { "name": "Unit power" },
@@ -275,6 +285,91 @@
           "powerful": "Powerful",
           "eco": "Eco",
           "auto": "Auto"
+        }
+      },
+      "cloud_cooling_curve_zone_a": {
+        "name": "Cooling curve zone A (cloud)",
+        "state": {
+          "off": "Off",
+          "low_temp_1": "Low temp 1",
+          "low_temp_2": "Low temp 2",
+          "low_temp_3": "Low temp 3",
+          "low_temp_4": "Low temp 4",
+          "low_temp_5": "Low temp 5",
+          "low_temp_6": "Low temp 6",
+          "low_temp_7": "Low temp 7",
+          "low_temp_8": "Low temp 8",
+          "high_temp_1": "High temp 1",
+          "high_temp_2": "High temp 2",
+          "high_temp_3": "High temp 3",
+          "high_temp_4": "High temp 4",
+          "high_temp_5": "High temp 5",
+          "high_temp_6": "High temp 6",
+          "high_temp_7": "High temp 7",
+          "high_temp_8": "High temp 8",
+          "curve_2p_9": "2P curve 9",
+          "curve_2p_10": "2P curve 10",
+          "curve_sot_11": "SOT curve 11",
+          "curve_sot_12": "SOT curve 12"
+        }
+      },
+      "cloud_heating_curve_zone_a": {
+        "name": "Heating curve zone A (cloud)",
+        "state": {
+          "off": "Off",
+          "low_temp_1": "Low temp 1",
+          "low_temp_2": "Low temp 2",
+          "low_temp_3": "Low temp 3",
+          "low_temp_4": "Low temp 4",
+          "low_temp_5": "Low temp 5",
+          "low_temp_6": "Low temp 6",
+          "low_temp_7": "Low temp 7",
+          "low_temp_8": "Low temp 8",
+          "high_temp_1": "High temp 1",
+          "high_temp_2": "High temp 2",
+          "high_temp_3": "High temp 3",
+          "high_temp_4": "High temp 4",
+          "high_temp_5": "High temp 5",
+          "high_temp_6": "High temp 6",
+          "high_temp_7": "High temp 7",
+          "high_temp_8": "High temp 8",
+          "curve_2p_9": "2P curve 9",
+          "curve_2p_10": "2P curve 10",
+          "curve_sot_11": "SOT curve 11",
+          "curve_sot_12": "SOT curve 12"
+        }
+      },
+      "cloud_heating_curve_zone_b": {
+        "name": "Heating curve zone B (cloud)",
+        "state": {
+          "off": "Off",
+          "low_temp_1": "Low temp 1",
+          "low_temp_2": "Low temp 2",
+          "low_temp_3": "Low temp 3",
+          "low_temp_4": "Low temp 4",
+          "low_temp_5": "Low temp 5",
+          "low_temp_6": "Low temp 6",
+          "low_temp_7": "Low temp 7",
+          "low_temp_8": "Low temp 8",
+          "high_temp_1": "High temp 1",
+          "high_temp_2": "High temp 2",
+          "high_temp_3": "High temp 3",
+          "high_temp_4": "High temp 4",
+          "high_temp_5": "High temp 5",
+          "high_temp_6": "High temp 6",
+          "high_temp_7": "High temp 7",
+          "high_temp_8": "High temp 8",
+          "curve_2p_9": "2P curve 9",
+          "curve_2p_10": "2P curve 10",
+          "curve_sot_11": "SOT curve 11",
+          "curve_sot_12": "SOT curve 12"
+        }
+      },
+      "cloud_light_strip": {
+        "name": "Light strip (cloud)",
+        "state": {
+          "off": "Off",
+          "on": "On"
         }
       }
     },

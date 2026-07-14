@@ -492,7 +492,7 @@ HOLDING_REGISTERS: dict[int, dict] = {
         "unit": "rpm",
         "scale": 1,
         "min": 1000,
-        "max": 4500,
+        "max": 6800,
         "entity_type": "number",
         "icon": "mdi:pump",
     },
@@ -512,7 +512,7 @@ HOLDING_REGISTERS: dict[int, dict] = {
         "unit": "L/h",
         "scale": 1,
         "min": 0,
-        "max": 4500,
+        "max": 3600,
         "entity_type": "number",
         "icon": "mdi:water-pump",
     },
@@ -743,6 +743,19 @@ ERROR_CODES: dict[int, str] = {}
 #                          equivalent, or cloud provides distinct data).
 # "cloud_unique": False → only shown when Modbus is NOT configured; when
 #                          Modbus is enabled the local register is preferred.
+
+# Shared enum for the per-zone heating/cooling climate curves (cloud 1046/1047/
+# 1049). 0 = off, 1-8 = low-temp presets, 9-16 = high-temp presets, 17-20 =
+# 2P/SOT curves. Values mirror the EcoHome app's climate-curve selector.
+_CLOUD_CURVE_OPTIONS: dict[int, str] = {
+    0: "off",
+    1: "low_temp_1", 2: "low_temp_2", 3: "low_temp_3", 4: "low_temp_4",
+    5: "low_temp_5", 6: "low_temp_6", 7: "low_temp_7", 8: "low_temp_8",
+    9: "high_temp_1", 10: "high_temp_2", 11: "high_temp_3", 12: "high_temp_4",
+    13: "high_temp_5", 14: "high_temp_6", 15: "high_temp_7", 16: "high_temp_8",
+    17: "curve_2p_9", 18: "curve_2p_10", 19: "curve_sot_11", 20: "curve_sot_12",
+}
+
 CLOUD_REGISTERS: dict[int, dict] = {
     # ── Read-only sensors ──────────────────────────────────────────────────────
     2097: {
@@ -914,6 +927,46 @@ CLOUD_REGISTERS: dict[int, dict] = {
         "cloud_unique": False,
         "icon": "mdi:pump",
     },
+    # ── Cloud-only sensors added in the updated EcoHome app ──────────────────
+    # These have no Modbus equivalent. On units that lack the corresponding
+    # hardware (no DHW/solar/underfloor loop) the cloud reports "N/A"; such
+    # entities auto-hide via the entity registry until a value appears.
+    2011: {
+        "name": "cloud_adjustable_target_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": True,
+        "icon": "mdi:thermometer",
+    },
+    2103: {
+        "name": "cloud_solar_boiler_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": True,
+        "icon": "mdi:solar-power",
+    },
+    2111: {
+        "name": "cloud_floor_heating_inlet_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": True,
+        "icon": "mdi:heating-coil",
+    },
+    2195: {
+        "name": "cloud_pump_fault_info",
+        "device_class": None,
+        "unit": None,
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": True,
+        "icon": "mdi:pump-off",
+    },
     # ── Writable settings (always shown when cloud is configured) ─────────────
     1024: {
         "name": "hot_water_setpoint",
@@ -975,6 +1028,61 @@ CLOUD_REGISTERS: dict[int, dict] = {
         "cloud_unique": False,
         "options": {0: "standard", 1: "powerful", 2: "eco", 3: "auto"},
         "icon": "mdi:lightning-bolt",
+    },
+    # ── Cloud-first climate curves & display settings (updated app) ──────────
+    # Per-zone curve selectors. Many users run cloud-only, so these are always
+    # shown when cloud is configured (cloud_unique=True) even though a coarser
+    # heating-curve register also exists on Modbus.
+    1046: {
+        "name": "cloud_cooling_curve_zone_a",
+        "device_class": None,
+        "unit": None,
+        "scale": 1,
+        "entity_type": "select",
+        "cloud_unique": True,
+        "options": _CLOUD_CURVE_OPTIONS,
+        "icon": "mdi:chart-bell-curve",
+    },
+    1047: {
+        "name": "cloud_heating_curve_zone_a",
+        "device_class": None,
+        "unit": None,
+        "scale": 1,
+        "entity_type": "select",
+        "cloud_unique": True,
+        "options": _CLOUD_CURVE_OPTIONS,
+        "icon": "mdi:chart-bell-curve",
+    },
+    1049: {
+        "name": "cloud_heating_curve_zone_b",
+        "device_class": None,
+        "unit": None,
+        "scale": 1,
+        "entity_type": "select",
+        "cloud_unique": True,
+        "options": _CLOUD_CURVE_OPTIONS,
+        "icon": "mdi:chart-bell-curve",
+    },
+    4112: {
+        "name": "cloud_light_strip_brightness",
+        "device_class": None,
+        "unit": "%",
+        "scale": 1,
+        "min": 10,
+        "max": 100,
+        "entity_type": "number",
+        "cloud_unique": True,
+        "icon": "mdi:brightness-6",
+    },
+    4111: {
+        "name": "cloud_light_strip",
+        "device_class": None,
+        "unit": None,
+        "scale": 1,
+        "entity_type": "select",
+        "cloud_unique": True,
+        "options": {0: "off", 1: "on"},
+        "icon": "mdi:led-strip-variant",
     },
 }
 

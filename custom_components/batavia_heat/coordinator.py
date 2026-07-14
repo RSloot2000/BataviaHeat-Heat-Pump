@@ -169,7 +169,9 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=timedelta(seconds=scan_secs),
         )
         self.config_entry = entry
-        self._slave_id = entry.data.get(CONF_SLAVE_ID, 1)
+        self._slave_id = entry.options.get(
+            CONF_SLAVE_ID, entry.data.get(CONF_SLAVE_ID, 1)
+        )
 
         # ── Cloud state ────────────────────────────────────────────────────────
         self._cloud: BataviaCloudGateway | None = None
@@ -221,17 +223,36 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Determine which host/port/serial to use for Modbus.
         # For cloud-primary + Modbus-backup the same entry keys are used.
+        # Options take precedence over data so the connection details (e.g. a
+        # changed ESP32/DR164 IP) can be updated after initial setup.
+        def _opt(key: str, default: Any) -> Any:
+            return entry.options.get(key, entry.data.get(key, default))
+
         modbus_type = (
             self._modbus_connection_type
             if self._connection_type == CONNECTION_CLOUD
             else self._connection_type
         )
         if modbus_type == CONNECTION_SERIAL:
-            self._serial_port = entry.data.get(CONF_SERIAL_PORT, "")
-            self._baudrate = entry.data.get(CONF_BAUDRATE, DEFAULT_BAUDRATE)
+            self._serial_port = _opt(CONF_SERIAL_PORT, "")
+            self._baudrate = _opt(CONF_BAUDRATE, DEFAULT_BAUDRATE)
         elif modbus_type in (CONNECTION_TCP, CONNECTION_ESP32):
-            self._host = entry.data.get(CONF_HOST, "")
-            self._tcp_port = entry.data.get(CONF_TCP_PORT, 502)
+            self._host = _opt(CONF_HOST, "")
+            self._tcp_port = _opt(CONF_TCP_PORT, 502)
+
+    @property
+    def _effective_modbus_type(self) -> str:
+        """Return the Modbus transport actually in use.
+
+        When cloud is the primary connection, Modbus runs as backup/extension
+        and its transport is stored in _modbus_connection_type. Otherwise the
+        primary connection type is the Modbus transport.
+        """
+        return (
+            self._modbus_connection_type
+            if self._connection_type == CONNECTION_CLOUD
+            else self._connection_type
+        )
 
     # ── Shared register processing ──
 
@@ -1011,6 +1032,16 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             except Exception:  # noqa: BLE001
                 pass  # Will retry next cycle
 
+        # ── Device on/off + operation mode (getDeviceDetailV3) ────────────────
+        # These control values are not in paramListV3; merge them into the
+        # cloud data dict using their own cloud addresses (e.g. 1017, 1021).
+        if data["cloud"]:
+            try:
+                state = await self._cloud.fetch_device_state(self._cloud_device_code)
+                data["cloud"].update(state)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Device state fetch failed: %s", err)
+
         # ── Modbus backup read ────────────────────────────────────────────────
         if self._modbus_enabled:
             try:
@@ -1068,6 +1099,19 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self._cloud.set_param(self._cloud_device_code, address, value)
         await self.async_request_refresh()
 
+    async def async_cloud_set_switch(self, address: int, on: bool) -> None:
+        """Set an on/off switch address via the cloud API (updateSwitchSate)."""
+        if self._cloud is None or not self._cloud_active:
+            raise RuntimeError("Cloud connection is not available")
+        try:
+            if not await self._cloud.is_session_valid():
+                await self._cloud.authenticate()
+            await self._cloud.toggle_switch(self._cloud_device_code, address, on)
+        except (CloudAuthError, CloudSessionError):
+            await self._cloud.authenticate()
+            await self._cloud.toggle_switch(self._cloud_device_code, address, on)
+        await self.async_request_refresh()
+
     def _write_with_reconnect(self, write_fn) -> None:
         """Run a pymodbus write, reconnecting once on a stale connection.
 
@@ -1081,7 +1125,7 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             write_fn()
         except (ConnectionException, ConnectionError, OSError) as err:
             _LOGGER.debug("Write failed (%s) — reconnecting and retrying", err)
-            if self._connection_type == CONNECTION_ESP32:
+            if self._effective_modbus_type == CONNECTION_ESP32:
                 self._reset_esp32_client()
             else:
                 self._reset_serial_client()
@@ -1093,11 +1137,7 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         When cloud is primary the effective Modbus type comes from
         _modbus_connection_type (set when Modbus backup is configured).
         """
-        effective = (
-            self._modbus_connection_type
-            if self._connection_type == CONNECTION_CLOUD
-            else self._connection_type
-        )
+        effective = self._effective_modbus_type
         if effective == CONNECTION_TCP:
             await self._async_connect_tcp()
             last_err: str = "unknown"
@@ -1139,7 +1179,8 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_write_coil(self, address: int, value: bool) -> None:
         """Write a value to a coil (FC05, pulse-based)."""
-        if self._connection_type == CONNECTION_TCP:
+        effective = self._effective_modbus_type
+        if effective == CONNECTION_TCP:
             await self._async_connect_tcp()
             last_err: str = "unknown"
             for attempt in range(1, _MAX_READ_RETRIES + 1):
@@ -1159,7 +1200,7 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             def _write() -> None:
                 client = (
                     self._get_esp32_client()
-                    if self._connection_type == CONNECTION_ESP32
+                    if effective == CONNECTION_ESP32
                     else self._get_serial_client()
                 )
                 result = client.write_coil(

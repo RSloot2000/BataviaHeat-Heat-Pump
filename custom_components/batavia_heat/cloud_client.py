@@ -269,6 +269,42 @@ class BataviaCloudGateway:
                     continue
         return values
 
+    async def fetch_device_state(self, device_code: str) -> dict[int, int]:
+        """Fetch on/off + operation-mode state from getDeviceDetailV3.
+
+        These live in the device-detail "cardList" (not paramListV3):
+          - device power    → top-level switchAddress (e.g. 1017)
+          - zone power      → card switchAddress (e.g. 1018)
+          - operation mode  → card modeList[*].modeAddress (e.g. 1021),
+                              current value in card["curMode"] (1=cool/2=heat/3=auto)
+
+        Returns {address_int: int_value} so the values slot straight into the
+        cloud data dict alongside paramListV3 addresses.
+        """
+        body = await self._crm_post(
+            "deviceInfo/getDeviceDetailV3", {"deviceCode": device_code}
+        )
+        self._check_response(body, "getDeviceDetailV3")
+        obj: dict[str, Any] = body.get("objectResult") or {}
+
+        state: dict[int, int] = {}
+        if (sw := obj.get("switchAddress")) is not None:
+            state[int(sw)] = 1 if obj.get("curSwitch") else 0
+
+        for card in obj.get("cardList") or []:
+            if (csw := card.get("switchAddress")) is not None:
+                state[int(csw)] = 1 if card.get("curSwitch") else 0
+            mode_list = card.get("modeList")
+            cur_mode = card.get("curMode")
+            if mode_list and cur_mode is not None:
+                mode_addr = mode_list[0].get("modeAddress")
+                if mode_addr is not None:
+                    try:
+                        state[int(mode_addr)] = int(cur_mode)
+                    except (ValueError, TypeError):
+                        pass
+        return state
+
     async def set_param(
         self, device_code: str, address: int, value: int
     ) -> None:

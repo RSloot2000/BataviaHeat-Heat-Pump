@@ -85,9 +85,9 @@
 |------|-----------|---------|-----------------|----------|
 | P01 | Werkingsmodus waterpomp | — | 0=Blijf draaien / 1=Stop bij temp. / 2=Intermitterend | **6472** |
 | P02 | Waterpomp regeltype | — | 1=Snelheid / 2=Stroom / 3=AAN-UIT / 4=Vermogen | **7232** |
-| P03 | Doelsnelheid waterpomp | rpm | 1000–4500 | **7234** |
+| P03 | Doelsnelheid waterpomp | rpm | 1000–6800 | **7234** |
 | P04 | Fabrikant waterpomp | — | 0–4 | **7235** |
-| P05 | Doelstroom waterpomp | L/uur | 0–4500 | **7236** |
+| P05 | Doelstroom waterpomp | L/uur | 0–3600 | **7236** |
 | P06 | Onderste retourwaterpomp interval | min | 5–120 | **7237** |
 | P07 | Sterilisatie onderste retourpomp | — | 0=Uit / 1=Aan | **7238** |
 | P08 | Onderste retourpomp getimed | — | 0=Uit / 1=Aan | **7239** |
@@ -336,6 +336,43 @@
 | F64 | Omvormerstoring | Losse kabel, onstabiele spanning, moederbord/driverboard defect |
 | F65 | Invertermodel instelling in uitvoering | Losse kabel, pomp/omvormer/moederbord defect |
 | F66 | Omvormerpomp storing/waarschuwing | Watersysteem geblokkeerd, losse kabel, pomp/omvormer/moederbord defect |
+
+---
+
+## Koelen — probleemoplossing: E25 en/of E68 
+
+> **Symptoom:** In koelmodus geeft de unit **E25 (koelverdamping / platenwisselaar temp. te laag)** en vaak **E68 (onvoldoende waterstroom)**, waarna hij stopt. De fout verdwijnt af en toe; terwijl de compressor kort draait koelt de buffer niet af maar warmt licht op. **Verwarmen werkt probleemloos** op dezelfde waterlus.
+
+### Oorzaak: te weinig waterstroom door de platenwisselaar
+
+In **verwarmen** is de verdamper de **buitencoil (lucht)** — de ventilator levert altijd "flow", dus de lagedruk blijft stabiel (~5 bar). In **koelen** wordt de **platenwisselaar** de verdamper en is die volledig afhankelijk van de **waterstroom** om warmte aan te leveren. Is die flow te laag, dan overkoelt de plaat lokaal, stort de lagedruk in (→ ~3 bar) → **E25**, en de flowschakelaar ziet te weinig → **E68**.
+
+Daarom faalt dezelfde buffer↔warmtepomp-lus die als *condensor* (verwarmen) prima werkt, als *verdamper* (koelen).
+
+### Diagnose-handtekening
+
+| Meting | Verwarmen (OK) | Koelen, te lage flow (fout) | Koelen na fix |
+|--------|----------------|-----------------------------|---------------|
+| Lagedruk (IR[32]) | stabiel ~5 bar | **stort in naar ~3 bar** | stabiel 4,5–5 bar |
+| Hogedruk (IR[33]) | ~13 bar | 11–13 (onstabiel) | 12,7–13,2 bar |
+| EEV oververhitting | ~26 K (normaal) | piek 35 K bij collaps | 30–36 K stabiel |
+
+> **Kernpunt:** de absolute oververhitting is *niet* het alarm — deze unit draait normaal ~26–36 K, ook in verwarmen. Het betrouwbare koel-alarmsignaal is dat de **lagedruk instort** onder de stabiele verwarmingswaarde van ~5 bar.
+
+### Oplossing: verhoog het pompdebiet
+
+1. Zet **P02 = 2 (flow)** — HR[7232] — zodat de pomp op debiet regelt i.p.v. vaste snelheid.
+2. Verhoog **P05 (doelflow)** — HR[7236] — van 2100 → **3600 L/h**.
+
+Resultaat: lagedruk stabiel op 4,5–5 bar (gelijk aan gezonde verwarming), en E25/E68 blijven weg.
+
+### Ook checken (waterzijde)
+
+- **Ontlucht de kop van de warmtepomp-circulatiepomp** — lucht in de pompvolute of platenwisselaar is onzichtbaar voor automatische ontluchters op buffer/hoogste punt en is een klassieke E68-oorzaak.
+- **Check/reinig het vuilfilter** in de leiding warmtepomp ↔ buffer.
+- Vuldruk ~2 bar (koud) is prima en sluit lucht-aanzuiging via onderdruk uit.
+
+> **Opmerking (deze installatie):** 4-poorts buffervat met de warmtepomp op 2 poorten en het CV/afgiftecircuit (aparte pomp) op de andere 2. De warmtepomp circuleert altijd alleen buffer ↔ platenwisselaar, dus kleppen/pomp aan de afgiftezijde beïnvloeden E68 niet — het flow-knelpunt zit in de warmtepomp-lus zelf.
 
 ---
 

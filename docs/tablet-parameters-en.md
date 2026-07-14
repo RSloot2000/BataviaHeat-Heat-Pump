@@ -85,9 +85,9 @@
 |------|-----------|------|-----------------|------------|
 | P01 | Water pump operating mode | - | 0=Continuous / 1=Stop at temp / 2=Intermittent | **6472** |
 | P02 | Water pump control type | - | 1=Speed / 2=Flow / 3=ON-OFF / 4=Power | **7232** |
-| P03 | Water pump target speed | rpm | 1000-4500 | **7234** |
+| P03 | Water pump target speed | rpm | 1000-6800 | **7234** |
 | P04 | Water pump manufacturer | - | 0-4 | **7235** |
-| P05 | Water pump target flow | L/hr | 0-4500 | **7236** |
+| P05 | Water pump target flow | L/hr | 0-3600 | **7236** |
 | P06 | Lower return water pump interval | min | 5-120 | **7237** |
 | P07 | Lower return pump sterilization | - | 0=Off / 1=On | **7238** |
 | P08 | Lower return pump timed | - | 0=Off / 1=On | **7239** |
@@ -336,6 +336,43 @@
 | F64 | Inverter fault | Loose cable, unstable voltage, mainboard/driver board defective |
 | F65 | Inverter model setting in progress | Loose cable, pump/inverter/mainboard defective |
 | F66 | Inverter pump fault/warning | Water system blocked, loose cable, pump/inverter/mainboard defective |
+
+---
+
+## Cooling Troubleshooting: E25 and/or E68
+
+> **Symptom:** In cooling mode the unit throws **E25 (cooling evaporation / plate HX temp too low)** and often **E68 (insufficient water flow)**, then stops. The error clears intermittently; while the compressor briefly runs the buffer tank does not cool but slightly warms. **Heating works perfectly** on the same water loop.
+
+### Root cause: insufficient water flow through the plate heat exchanger
+
+In **heating** the evaporator is the **outdoor air coil** (the fan always supplies "flow"), so the low-side pressure stays stable (~5 bar). In **cooling** the **plate heat exchanger** becomes the evaporator and depends entirely on **water flow** to feed it heat. If water flow is too low, the plate over-cools locally, the low-side pressure collapses (→ ~3 bar) → **E25**, and the flow switch sees too little flow → **E68**.
+
+This is why the same buffer↔heat-pump loop that works fine as a *condenser* in heating fails as an *evaporator* in cooling.
+
+### Diagnostic signature
+
+| Metric | Heating (OK) | Cooling, too-low flow (fault) | Cooling after fix |
+|--------|-------------|-------------------------------|-------------------|
+| Low pressure (IR[32]) | stable ~5 bar | **collapses to ~3 bar** | stable 4.5–5 bar |
+| High pressure (IR[33]) | ~13 bar | 11–13 (unstable) | 12.7–13.2 bar |
+| EEV superheat | ~26 K (normal) | spikes to 35 K at collapse | 30–36 K stable |
+
+> **Key insight:** absolute superheat is *not* the alarm — this unit runs ~26–36 K superheat normally, even in heating. The reliable cooling red flag is the **low-side pressure collapsing** below the stable heating value of ~5 bar.
+
+### Fix: raise the water pump flow
+
+1. Set **P02 = 2 (flow control)** — HR[7232] — so the pump regulates on flow instead of fixed speed.
+2. Raise **P05 (target flow)** — HR[7236] — from 2100 → **3600 L/h**.
+
+Result: low-side pressure held stable at 4.5–5 bar (matching healthy heating), and E25/E68 no longer appear.
+
+### Also check (water side)
+
+- **Bleed the heat-pump circulation pump head** — air trapped in the pump volute or plate HX is invisible to buffer/high-point automatic air vents and is a classic E68 cause.
+- **Check/clean the dirt strainer** in the heat-pump ↔ buffer line.
+- System fill pressure ~2 bar (cold) is fine and rules out air being drawn in through under-pressure.
+
+> **Note (this installation):** 4-port buffer tank with the heat pump on 2 ports and the CV/distribution circuit (separate pump) on the other 2. The heat pump only ever circulates buffer ↔ plate HX, so distribution-side valves/pump do not affect E68 — the flow bottleneck is in the heat-pump loop itself.
 
 ---
 

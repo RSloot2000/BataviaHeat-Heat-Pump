@@ -48,6 +48,8 @@ class BataviaHeatSwitch(RestoreEntity, BataviaHeatEntity, SwitchEntity):
     """
 
     _attr_assumed_state = True
+    # Coils have no data-backed register in coordinator.data — never auto-hide.
+    _auto_hide_when_missing = False
 
     def __init__(
         self,

@@ -462,20 +462,45 @@ class BataviaHeatOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        entry = self._config_entry
+        modbus_type = _effective_modbus_type(entry)
+
         if user_input is not None:
-            return self.async_create_entry(data=_normalize_advanced_options(user_input))
+            return self.async_create_entry(
+                data=_normalize_advanced_options(user_input, modbus_type)
+            )
 
         dir_options = await self.hass.async_add_executor_job(_discover_offload_dirs)
         schema = _build_advanced_schema(
-            energy_entity=self._config_entry.options.get(CONF_ENERGY_ENTITY, ""),
-            offload_enabled=self._config_entry.options.get(CONF_OFFLOAD_ENABLED, False),
-            offload_url=self._config_entry.options.get(CONF_OFFLOAD_URL, ""),
-            offload_db_max_mb=self._config_entry.options.get(
+            entry=entry,
+            modbus_type=modbus_type,
+            energy_entity=entry.options.get(CONF_ENERGY_ENTITY, ""),
+            offload_enabled=entry.options.get(CONF_OFFLOAD_ENABLED, False),
+            offload_url=entry.options.get(CONF_OFFLOAD_URL, ""),
+            offload_db_max_mb=entry.options.get(
                 CONF_OFFLOAD_DB_MAX_MB, DEFAULT_OFFLOAD_DB_MAX_MB
             ),
             dir_options=dir_options,
         )
         return self.async_show_form(step_id="init", data_schema=schema)
+
+
+def _effective_modbus_type(entry: ConfigEntry) -> str | None:
+    """Return the Modbus transport whose connection details can be edited.
+
+    None when the entry is cloud-only (no Modbus connection to reconfigure).
+    """
+    ctype = entry.data.get(CONF_CONNECTION_TYPE, CONNECTION_TCP)
+    if ctype == CONNECTION_CLOUD:
+        if not entry.data.get(CONF_MODBUS_ENABLED, False):
+            return None
+        return entry.data.get(CONF_MODBUS_CONNECTION_TYPE, CONNECTION_TCP)
+    return ctype
+
+
+def _current(entry: ConfigEntry, key: str, default: Any) -> Any:
+    """Return the effective current value (options override data)."""
+    return entry.options.get(key, entry.data.get(key, default))
 
 
 def _build_advanced_schema(
@@ -484,10 +509,56 @@ def _build_advanced_schema(
     offload_url: str,
     offload_db_max_mb: float,
     dir_options: list[str],
+    entry: ConfigEntry | None = None,
+    modbus_type: str | None = None,
 ) -> vol.Schema:
     if offload_url and offload_url not in dir_options:
         dir_options.append(offload_url)
-    return vol.Schema(
+
+    fields: dict[Any, Any] = {}
+
+    # ── Editable Modbus connection details (IP can change over time) ──────────
+    if modbus_type in (CONNECTION_TCP, CONNECTION_ESP32):
+        fields[
+            vol.Optional(
+                CONF_HOST,
+                description={"suggested_value": _current(entry, CONF_HOST, "")},
+            )
+        ] = str
+        fields[
+            vol.Optional(
+                CONF_TCP_PORT,
+                default=_current(entry, CONF_TCP_PORT, DEFAULT_TCP_PORT),
+            )
+        ] = vol.All(vol.Coerce(int), vol.Range(min=1, max=65535))
+        fields[
+            vol.Optional(
+                CONF_SLAVE_ID,
+                default=_current(entry, CONF_SLAVE_ID, DEFAULT_SLAVE_ID),
+            )
+        ] = vol.All(vol.Coerce(int), vol.Range(min=0, max=247))
+    elif modbus_type == CONNECTION_SERIAL:
+        fields[
+            vol.Optional(
+                CONF_SERIAL_PORT,
+                description={"suggested_value": _current(entry, CONF_SERIAL_PORT, "")},
+            )
+        ] = str
+        fields[
+            vol.Optional(
+                CONF_BAUDRATE,
+                default=_current(entry, CONF_BAUDRATE, DEFAULT_BAUDRATE),
+            )
+        ] = vol.All(vol.Coerce(int), vol.Range(min=1200, max=115200))
+        fields[
+            vol.Optional(
+                CONF_SLAVE_ID,
+                default=_current(entry, CONF_SLAVE_ID, DEFAULT_SLAVE_ID),
+            )
+        ] = vol.All(vol.Coerce(int), vol.Range(min=0, max=247))
+
+    # ── COP + register offload options ───────────────────────────────────────
+    fields.update(
         {
             vol.Optional(
                 CONF_ENERGY_ENTITY,
@@ -513,9 +584,12 @@ def _build_advanced_schema(
             ),
         }
     )
+    return vol.Schema(fields)
 
 
-def _normalize_advanced_options(user_input: dict[str, Any]) -> dict[str, Any]:
+def _normalize_advanced_options(
+    user_input: dict[str, Any], modbus_type: str | None = None
+) -> dict[str, Any]:
     options = dict(user_input)
     options.setdefault(CONF_ENERGY_ENTITY, "")
     options.setdefault(CONF_OFFLOAD_URL, "")
