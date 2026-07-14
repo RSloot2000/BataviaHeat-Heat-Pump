@@ -6,7 +6,7 @@
 [![GitHub Release](https://img.shields.io/github/v/release/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/releases)
 [![GitHub Release Date](https://img.shields.io/github/release-date/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/releases)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.1.0%2B-blue?logo=home-assistant)
-[![License](https://img.shields.io/github/license/RSloot2000/BataviaHeat-Heat-Pump)](LICENSE)
+[![License](https://img.shields.io/github/license/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/blob/main/LICENSE)
 [![GitHub issues](https://img.shields.io/github/issues/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/issues)
 ![Maintenance](https://img.shields.io/maintenance/yes/2026)
 
@@ -123,6 +123,8 @@ Built by reverse-engineering the Modbus protocol using passive bus sniffing and 
    - Modbus adds 40+ extra registers (working mode, pump parameters, stooklijn, etc.) at 10 s polling
    - If you skip this step, the integration runs cloud-only
 
+> **⚠ Single active session per account:** The EcoHome backend only allows **one active session per account**. Logging in here with your main account **logs you out of the EcoHome mobile app** (and logging back into the app logs Home Assistant out, triggering re-authentication). To avoid this tug-of-war, use a **separate EcoHome account** for Home Assistant and share the heat pump with it, so your phone app keeps its own session.
+
 ### DR164 gateway (Modbus TCP)
 
 4. Enter the connection details:
@@ -207,12 +209,15 @@ Optionally push every register snapshot to a NAS/HTTP endpoint or local director
 | Buffer outlet temperature | HR[3231] | °C | Buffer tank outlet (water leaving buffer) |
 | Thermal power | calculated | kW | flow × ΔT × 4.186 / 3600 |
 | Energy delivered | integrated | kWh | Riemann sum of thermal power |
-| COP (current) | calculated | — | Real-time coefficient of performance¹ |
+| Cooling power | calculated | kW | Cooling magnitude (positive while cooling, 0 while heating) |
+| Cooling energy delivered | integrated | kWh | Riemann sum of cooling power |
+| COP (current) | calculated | — | Real-time coefficient of performance (heating)¹ |
 | COP (today) | calculated | — | Average COP for today¹ |
 | COP (this week) | calculated | — | Average COP for the current week¹ |
 | COP (this month) | calculated | — | Average COP for the current month¹ |
 | COP (this year) | calculated | — | Average COP for the current year¹ |
 | COP (all time) | calculated | — | Average COP since installation¹ |
+| EER (current/today/week/month/year/all time) | calculated | — | Cooling efficiency, same periods as COP¹ |
 
 > ¹ COP sensors are only created when an external kWh meter entity is configured in the integration options. See [COP calculation](#cop-calculation).
 
@@ -342,6 +347,8 @@ The heating curve registers use the M-register mapping: M00–M09 = HR[6400 + M]
 ## COP calculation
 
 This integration has **built-in COP (Coefficient of Performance) sensors**. Thermal power is calculated from flow rate × ΔT using plate HX water temperatures. The calculation uses **Modbus data first** (IR[54] flow, HR[1348]/HR[1349] temperatures) and **falls back to cloud data** (cloud addresses 2192/2187/2188) when Modbus is unavailable. This means COP tracking works in cloud-only mode too, as long as those cloud sensors are reporting values.
+
+**Heating vs cooling are tracked separately.** In heating the water is warmed (outlet > inlet) → **COP** sensors. In cooling the water is chilled (outlet < inlet) → separate **cooling power**, **cooling energy delivered** and **EER** sensors. Each mode only accumulates while it is actually running, so the metrics don't blend.
 
 Electrical consumption is **not** available from the heat pump itself. An external kWh meter (e.g. HomeWizard) is required for COP calculation.
 

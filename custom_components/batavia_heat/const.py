@@ -213,7 +213,7 @@ HOLDING_REGISTERS: dict[int, dict] = {
         },
     },
 
-    # ─── Stooklijn / Heating Curve Parameters (M-registers) ───
+    # ─── Heating Curve Parameters (M-registers) ───
     # Non-linear HR mapping: M00-M09 = HR[6400+Mxx], M10-M21 = HR[6400+Mxx+15],
     # M35-M40 = HR[7184-7190] (gap at 7188). All sniffer-confirmed.
     6401: {
@@ -587,8 +587,16 @@ CALCULATED_SENSORS: dict[str, dict] = {
         "device_class": "power",
         "unit": "kW",
         "icon": "mdi:fire",
-        "description": "Berekend: flow_rate × (outlet − inlet) × 4.186 / 3600",
+        "description": "Calculated: flow_rate × (outlet − inlet) × 4.186 / 3600",
         # Sources: IR[54] flow L/h, HR[1348] inlet °C (T78), HR[1349] outlet °C (T79)
+    },
+    "cooling_power": {
+        "name": "cooling_power",
+        "device_class": "power",
+        "unit": "kW",
+        "icon": "mdi:snowflake",
+        "description": "Calculated: flow_rate × (inlet − outlet) × 4.186 / 3600 (cooling)",
+        # Cooling magnitude: positive while cooling (outlet < inlet), 0 while heating.
     },
 }
 

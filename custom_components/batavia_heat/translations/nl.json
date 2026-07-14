@@ -1,0 +1,388 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BataviaHeat R290 verbinding",
+        "description": "Kies hoe je verbinding maakt met je warmtepomp. Kies Cloud om je EcoHome-account te gebruiken, of een Modbus-optie voor een directe lokale verbinding.",
+        "data": {
+          "connection_type": "Verbindingstype"
+        }
+      },
+      "cloud_login": {
+        "title": "EcoHome cloud-login",
+        "description": "Voer de gebruikersnaam en het wachtwoord in die je voor de EcoHome-app gebruikt. Je wachtwoord wordt opgeslagen als MD5-hash — nooit als platte tekst.",
+        "data": {
+          "username": "E-mailadres / gebruikersnaam",
+          "password": "Wachtwoord"
+        }
+      },
+      "cloud_device": {
+        "title": "Apparaat selecteren",
+        "description": "Er zijn meerdere warmtepompen op je account gevonden. Selecteer degene die je wilt bedienen.",
+        "data": {
+          "device_code": "Apparaat"
+        }
+      },
+      "cloud_modbus": {
+        "title": "Modbus toevoegen als backup / uitbreiding?",
+        "description": "Cloud is de primaire verbinding (elke 30 s). Voeg optioneel een lokale Modbus-verbinding toe voor snellere updates en extra registers. Als de cloud onbereikbaar is, valt de integratie automatisch terug op Modbus.",
+        "data": {
+          "add_modbus": "Modbus-backup / uitbreiding toevoegen"
+        }
+      },
+      "modbus_type": {
+        "title": "Modbus-verbindingstype",
+        "description": "Kies hoe de lokale Modbus-verbinding wordt gemaakt.",
+        "data": {
+          "modbus_connection_type": "Modbus-verbindingstype"
+        }
+      },
+      "tcp": {
+        "title": "DR164-gateway (Modbus TCP)",
+        "description": "Configureer de TCP-verbinding met je DR164 RS485-naar-WiFi-converter. Voer het IP-adres van je gateway in.",
+        "data": {
+          "host": "Host / IP-adres",
+          "tcp_port": "TCP-poort",
+          "slave_id": "Modbus slave-ID"
+        }
+      },
+      "esp32": {
+        "title": "ESP32-proxy (Modbus TCP)",
+        "description": "Configureer de verbinding met je ESP32 Modbus-TCP-proxy. Voer het IP-adres in dat je aan de ESP32 hebt toegewezen.",
+        "data": {
+          "host": "Host / IP-adres",
+          "tcp_port": "TCP-poort",
+          "slave_id": "Modbus slave-ID"
+        }
+      },
+      "serial": {
+        "title": "Modbus RTU (serieel) verbinding",
+        "description": "Configureer de seriële verbinding met je USB RS-485-adapter.",
+        "data": {
+          "serial_port": "Seriële poort (bijv. /dev/ttyUSB0 of COM3)",
+          "slave_id": "Modbus slave-ID",
+          "baudrate": "Baudrate (standaard: 9600)"
+        }
+      },
+      "advanced": {
+        "title": "Geavanceerde opties (optioneel)",
+        "description": "Optionele functies. Laat elk veld leeg om ze over te slaan — je kunt dit later altijd wijzigen via de knop Configureren. Selecteer een kWh-meter om COP-sensoren in te schakelen, en/of schakel register-offload in om ruwe registers op te slaan voor latere analyse.",
+        "data": {
+          "energy_entity": "Elektriciteitsmeter (kWh)",
+          "offload_enabled": "Register-offload inschakelen",
+          "offload_url": "Offload-URL of lokaal pad (bijv. http://nas:8099/ of /share/snooper, leeg = uit)",
+          "offload_db_max_mb": "Max. grootte snapshots.db in MB (0 = onbeperkt; oudste items worden verwijderd bij overschrijding)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbinden mislukt. Controleer je verbindingsinstellingen.",
+      "invalid_auth": "Ongeldige inloggegevens. Controleer je gebruikersnaam en wachtwoord.",
+      "no_devices": "Geen apparaten gevonden op dit account.",
+      "unknown": "Er is een onverwachte fout opgetreden."
+    },
+    "abort": {
+      "already_configured": "Dit apparaat is al geconfigureerd."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "BataviaHeat R290 opties",
+        "description": "Werk de Modbus-verbindingsgegevens bij (bijv. een gewijzigd ESP32/DR164 IP-adres), selecteer je kWh-meter voor COP-sensoren en configureer register-offload.",
+        "data": {
+          "host": "Host / IP-adres",
+          "tcp_port": "TCP-poort",
+          "slave_id": "Slave-ID",
+          "serial_port": "Seriële poort",
+          "baudrate": "Baudrate",
+          "energy_entity": "Elektriciteitsmeter (kWh)",
+          "offload_enabled": "Register-offload inschakelen",
+          "offload_url": "Offload-URL of lokaal pad (bijv. http://nas:8099/ of /share/snooper, leeg = uit)",
+          "offload_db_max_mb": "Max. grootte snapshots.db in MB (0 = onbeperkt; oudste items worden verwijderd bij overschrijding)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "ambient_temperature": { "name": "Omgevingstemperatuur" },
+      "fin_coil_temperature": { "name": "Vincoil-temperatuur" },
+      "suction_temperature": { "name": "Zuigtemperatuur" },
+      "discharge_temperature": { "name": "Persgastemperatuur" },
+      "low_pressure": { "name": "Lage druk" },
+      "high_pressure": { "name": "Hoge druk" },
+      "pump_target_speed": { "name": "Pomp doelsnelheid" },
+      "pump_flow_rate": { "name": "Pomp debiet" },
+      "pump_control_signal": { "name": "Pomp regelsignaal" },
+      "pump_feedback_signal": { "name": "Pomp feedbacksignaal" },
+      "plate_hx_water_inlet_temperature": { "name": "Platenwisselaar waterinlaat-temperatuur" },
+      "plate_hx_water_outlet_temperature": { "name": "Platenwisselaar wateruitlaat-temperatuur" },
+      "module_water_outlet_temperature": { "name": "Module wateruitlaat-temperatuur" },
+      "module_ambient_temperature": { "name": "Module omgevingstemperatuur" },
+      "operational_status": { "name": "Bedrijfsstatus" },
+      "heating_target_setpoint": { "name": "Verwarmings-doelsetpoint" },
+      "compressor_discharge_temperature": { "name": "Compressor persgastemperatuur" },
+      "water_outlet_temperature": { "name": "Wateruitlaat-temperatuur" },
+      "total_water_outlet_temperature": { "name": "Totale wateruitlaat-temperatuur" },
+      "buffer_inlet_temperature": { "name": "Buffer inlaattemperatuur" },
+      "buffer_outlet_temperature": { "name": "Buffer uitlaattemperatuur" },
+      "silent_mode_state": { "name": "Status stille modus" },
+      "thermal_power": { "name": "Thermisch vermogen" },
+      "energy_delivered": { "name": "Geleverde energie" },
+      "cooling_power": { "name": "Koelvermogen" },
+      "cooling_energy_delivered": { "name": "Geleverde koelenergie" },
+      "cop_current": { "name": "COP (actueel)" },
+      "cop_today": { "name": "COP vandaag" },
+      "cop_week": { "name": "COP deze week" },
+      "cop_month": { "name": "COP deze maand" },
+      "cop_year": { "name": "COP dit jaar" },
+      "cop_alltime": { "name": "COP totaal" },
+      "eer_current": { "name": "EER (actueel)" },
+      "eer_today": { "name": "EER vandaag" },
+      "eer_week": { "name": "EER deze week" },
+      "eer_month": { "name": "EER deze maand" },
+      "eer_year": { "name": "EER dit jaar" },
+      "eer_alltime": { "name": "EER totaal" },
+      "room_temperature": { "name": "Kamertemperatuur" },
+      "compressor_speed": { "name": "Compressorsnelheid" },
+      "hot_water_tank_temperature": { "name": "Warmwatertank-temperatuur" },
+      "buffer_top_temperature": { "name": "Buffertank boven-temperatuur" },
+      "buffer_bottom_temperature": { "name": "Buffertank onder-temperatuur" },
+      "cloud_outdoor_temperature": { "name": "Buitentemperatuur (cloud)" },
+      "cloud_system_water_outlet_temperature": { "name": "Systeem wateruitlaat-temperatuur (cloud)" },
+      "cloud_hp_water_outlet_temperature": { "name": "WP wateruitlaat-temperatuur (cloud)" },
+      "cloud_fin_coil_temperature": { "name": "Vincoil-temperatuur (cloud)" },
+      "cloud_discharge_temperature": { "name": "Persgastemperatuur (cloud)" },
+      "cloud_suction_temperature": { "name": "Zuigtemperatuur (cloud)" },
+      "cloud_low_pressure": { "name": "Lage druk (cloud)" },
+      "cloud_high_pressure": { "name": "Hoge druk (cloud)" },
+      "cloud_plate_hx_water_inlet_temperature": { "name": "Platenwisselaar inlaat-temperatuur (cloud)" },
+      "cloud_plate_hx_water_outlet_temperature": { "name": "Platenwisselaar uitlaat-temperatuur (cloud)" },
+      "cloud_total_water_outlet_temperature": { "name": "Totale wateruitlaat-temperatuur (cloud)" },
+      "cloud_pump_target_speed": { "name": "Pomp doelsnelheid (cloud)" },
+      "cloud_pump_flow_rate": { "name": "Pomp debiet (cloud)" },
+      "cloud_pump_control_signal": { "name": "Pomp regelsignaal (cloud)" },
+      "cloud_pump_feedback_signal": { "name": "Pomp feedbacksignaal (cloud)" },
+      "cloud_adjustable_target_temperature": { "name": "Instelbare doeltemperatuur (cloud)" },
+      "cloud_solar_boiler_temperature": { "name": "Zonneboiler-temperatuur (cloud)" },
+      "cloud_floor_heating_inlet_temperature": { "name": "Vloerverwarming inlaat-temperatuur (cloud)" },
+      "cloud_pump_fault_info": { "name": "Pomp-storingsinfo (cloud)" }
+    },
+    "binary_sensor": {
+      "compressor_running": { "name": "Compressor draait" },
+      "unit_power_state": { "name": "Status unit-voeding" }
+    },
+    "number": {
+      "cooling_setpoint_temperature": { "name": "Koeling insteltemperatuur" },
+      "max_heating_temperature": { "name": "Max. verwarmingstemperatuur" },
+      "cooling_target_room_temperature": { "name": "Koeling doel-kamertemperatuur" },
+      "heating_target_room_temperature": { "name": "Verwarming doel-kamertemperatuur" },
+      "heating_setpoint_zone_b": { "name": "Verwarmingssetpoint zone B" },
+      "cooling_curve_zone_a": { "name": "Koelcurve zone A" },
+      "heating_curve_mode": { "name": "Verwarmingscurve zone A" },
+      "cooling_curve_zone_b": { "name": "Koelcurve zone B" },
+      "heating_curve_zone_b": { "name": "Verwarmingscurve zone B" },
+      "cool_custom_outdoor_temp_1": { "name": "Koelen aangepaste buitentemp. 1" },
+      "cool_custom_outdoor_temp_2": { "name": "Koelen aangepaste buitentemp. 2" },
+      "cool_custom_outlet_temp_1": { "name": "Koelen aangepaste uitlaattemp. 1" },
+      "cool_custom_outlet_temp_2": { "name": "Koelen aangepaste uitlaattemp. 2" },
+      "curve_outdoor_temp_high": { "name": "Curve buitentemp. hoog" },
+      "curve_outdoor_temp_low": { "name": "Curve buitentemp. laag" },
+      "curve_water_temp_mild": { "name": "Curve watertemp. mild" },
+      "curve_water_temp_cold": { "name": "Curve watertemp. koud" },
+      "auto_cool_min_ambient": { "name": "Auto-koelen min. omgevingstemp." },
+      "auto_cool_max_ambient": { "name": "Auto-koelen max. omgevingstemp." },
+      "holiday_heating_temperature": { "name": "Vakantie verwarmingstemperatuur" },
+      "holiday_dhw_temperature": { "name": "Vakantie warmwatertemperatuur" },
+      "pump_target_speed_setpoint": { "name": "Pomp doelsnelheid instelling" },
+      "pump_manufacturer": { "name": "Pompfabrikant" },
+      "pump_target_flow_setpoint": { "name": "Pomp doeldebiet instelling" },
+      "lower_return_pump_interval": { "name": "Onderste retourpomp interval" },
+      "pump_intermittent_stop_time": { "name": "Pomp intermitterende stoptijd" },
+      "pump_intermittent_run_time": { "name": "Pomp intermitterende looptijd" },
+      "hot_water_setpoint": { "name": "Warmwater-setpoint" },
+      "cloud_cooling_setpoint": { "name": "Koelsetpoint (cloud)" },
+      "cloud_heating_setpoint": { "name": "Verwarmingssetpoint (cloud)" },
+      "cloud_heating_setpoint_zone_b": { "name": "Verwarmingssetpoint zone B (cloud)" },
+      "cloud_light_strip_brightness": { "name": "Lichtstrip-helderheid (cloud)" }
+    },
+    "switch": {
+      "unit_power": { "name": "Unit-voeding" },
+      "silent_mode": { "name": "Stille modus" },
+      "silent_level_2": { "name": "Stil niveau 2" }
+    },
+    "select": {
+      "power_mode": {
+        "name": "Power-modus",
+        "state": {
+          "standard": "Standaard",
+          "powerful": "Krachtig",
+          "eco": "Eco",
+          "auto": "Auto"
+        }
+      },
+      "working_mode": {
+        "name": "Werkingsmodus",
+        "state": {
+          "cool": "Koelen",
+          "heat": "Verwarmen",
+          "auto": "Auto"
+        }
+      },
+      "auxiliary_heater_mode": {
+        "name": "Hulpverwarming-modus",
+        "state": {
+          "off": "Uit",
+          "heating_only": "Alleen verwarmen",
+          "dhw_only": "Alleen warm water",
+          "heating_and_dhw": "Verwarmen + warm water"
+        }
+      },
+      "external_heat_source_mode": {
+        "name": "Externe warmtebron-modus",
+        "state": {
+          "off": "Uit",
+          "heating_only": "Alleen verwarmen",
+          "dhw_only": "Alleen warm water",
+          "heating_and_dhw": "Verwarmen + warm water"
+        }
+      },
+      "pump_operating_mode": {
+        "name": "Pomp werkingsmodus",
+        "state": {
+          "continuous": "Continu",
+          "stop_at_temp": "Stop bij temp.",
+          "intermittent": "Intermitterend"
+        }
+      },
+      "pump_control_type": {
+        "name": "Pomp regeltype",
+        "state": {
+          "speed": "Snelheid",
+          "flow": "Debiet",
+          "on_off": "Aan-uit",
+          "power": "Vermogen"
+        }
+      },
+      "lower_return_pump_sterilization": {
+        "name": "Onderste retourpomp sterilisatie",
+        "state": {
+          "off": "Uit",
+          "on": "Aan"
+        }
+      },
+      "lower_return_pump_timed": {
+        "name": "Onderste retourpomp getimed",
+        "state": {
+          "off": "Uit",
+          "on": "Aan"
+        }
+      },
+      "cloud_silent_mode": {
+        "name": "Stille modus (cloud)",
+        "state": {
+          "off": "Uit",
+          "on": "Aan"
+        }
+      },
+      "cloud_power_mode": {
+        "name": "Power-modus (cloud)",
+        "state": {
+          "standard": "Standaard",
+          "powerful": "Krachtig",
+          "eco": "Eco",
+          "auto": "Auto"
+        }
+      },
+      "cloud_cooling_curve_zone_a": {
+        "name": "Koelcurve zone A (cloud)",
+        "state": {
+          "off": "Uit",
+          "low_temp_1": "Lage temp. 1",
+          "low_temp_2": "Lage temp. 2",
+          "low_temp_3": "Lage temp. 3",
+          "low_temp_4": "Lage temp. 4",
+          "low_temp_5": "Lage temp. 5",
+          "low_temp_6": "Lage temp. 6",
+          "low_temp_7": "Lage temp. 7",
+          "low_temp_8": "Lage temp. 8",
+          "high_temp_1": "Hoge temp. 1",
+          "high_temp_2": "Hoge temp. 2",
+          "high_temp_3": "Hoge temp. 3",
+          "high_temp_4": "Hoge temp. 4",
+          "high_temp_5": "Hoge temp. 5",
+          "high_temp_6": "Hoge temp. 6",
+          "high_temp_7": "Hoge temp. 7",
+          "high_temp_8": "Hoge temp. 8",
+          "curve_2p_9": "2P-curve 9",
+          "curve_2p_10": "2P-curve 10",
+          "curve_sot_11": "SOT-curve 11",
+          "curve_sot_12": "SOT-curve 12"
+        }
+      },
+      "cloud_heating_curve_zone_a": {
+        "name": "Verwarmingscurve zone A (cloud)",
+        "state": {
+          "off": "Uit",
+          "low_temp_1": "Lage temp. 1",
+          "low_temp_2": "Lage temp. 2",
+          "low_temp_3": "Lage temp. 3",
+          "low_temp_4": "Lage temp. 4",
+          "low_temp_5": "Lage temp. 5",
+          "low_temp_6": "Lage temp. 6",
+          "low_temp_7": "Lage temp. 7",
+          "low_temp_8": "Lage temp. 8",
+          "high_temp_1": "Hoge temp. 1",
+          "high_temp_2": "Hoge temp. 2",
+          "high_temp_3": "Hoge temp. 3",
+          "high_temp_4": "Hoge temp. 4",
+          "high_temp_5": "Hoge temp. 5",
+          "high_temp_6": "Hoge temp. 6",
+          "high_temp_7": "Hoge temp. 7",
+          "high_temp_8": "Hoge temp. 8",
+          "curve_2p_9": "2P-curve 9",
+          "curve_2p_10": "2P-curve 10",
+          "curve_sot_11": "SOT-curve 11",
+          "curve_sot_12": "SOT-curve 12"
+        }
+      },
+      "cloud_heating_curve_zone_b": {
+        "name": "Verwarmingscurve zone B (cloud)",
+        "state": {
+          "off": "Uit",
+          "low_temp_1": "Lage temp. 1",
+          "low_temp_2": "Lage temp. 2",
+          "low_temp_3": "Lage temp. 3",
+          "low_temp_4": "Lage temp. 4",
+          "low_temp_5": "Lage temp. 5",
+          "low_temp_6": "Lage temp. 6",
+          "low_temp_7": "Lage temp. 7",
+          "low_temp_8": "Lage temp. 8",
+          "high_temp_1": "Hoge temp. 1",
+          "high_temp_2": "Hoge temp. 2",
+          "high_temp_3": "Hoge temp. 3",
+          "high_temp_4": "Hoge temp. 4",
+          "high_temp_5": "Hoge temp. 5",
+          "high_temp_6": "Hoge temp. 6",
+          "high_temp_7": "Hoge temp. 7",
+          "high_temp_8": "Hoge temp. 8",
+          "curve_2p_9": "2P-curve 9",
+          "curve_2p_10": "2P-curve 10",
+          "curve_sot_11": "SOT-curve 11",
+          "curve_sot_12": "SOT-curve 12"
+        }
+      },
+      "cloud_light_strip": {
+        "name": "Lichtstrip (cloud)",
+        "state": {
+          "off": "Uit",
+          "on": "Aan"
+        }
+      }
+    },
+    "climate": {
+      "heat_pump": { "name": "Warmtepomp" }
+    }
+  }
+}

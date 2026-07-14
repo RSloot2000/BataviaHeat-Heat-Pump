@@ -99,13 +99,31 @@ async def async_setup_entry(
         power_unit_watts=False,
     ))
 
-    # COP sensors — only created when an energy entity is configured
+    # Cooling energy integration sensor (built-in Riemann sum)
+    entities.append(BataviaHeatEnergySensor(
+        coordinator,
+        key="cooling_energy_delivered",
+        name="cooling_energy_delivered",
+        icon="mdi:snowflake",
+        power_source="cooling_power",
+        power_unit_watts=False,
+    ))
+
+    # COP (heating) + EER (cooling) sensors — only when an energy entity is set
     energy_entity_id = entry.options.get(CONF_ENERGY_ENTITY, "")
     if energy_entity_id:
         entities.append(BataviaHeatCOPCurrentSensor(coordinator, energy_entity_id))
+        entities.append(
+            BataviaHeatCOPCurrentSensor(coordinator, energy_entity_id, mode="cooling")
+        )
         for period in ("today", "week", "month", "year", "alltime"):
             entities.append(
                 BataviaHeatCOPPeriodSensor(coordinator, period, energy_entity_id)
+            )
+            entities.append(
+                BataviaHeatCOPPeriodSensor(
+                    coordinator, period, energy_entity_id, mode="cooling"
+                )
             )
 
     async_add_entities(entities)
@@ -218,6 +236,27 @@ class BataviaHeatCalculatedSensor(SensorEntity):
             # Heating mode: thermal power should be positive
             return max(result, 0.0)
 
+        if self._key == "cooling_power":
+            # cooling_power = flow_rate(L/h) × (inlet−outlet)(°C) × 4.186 / 3600
+            # Positive magnitude while cooling (outlet < inlet); 0 while heating.
+            holding = data.get("holding", {})
+            inp = data.get("input", {})
+            cloud = data.get("cloud", {})
+
+            flow   = inp.get(54)       or cloud.get(2192)   # L/h
+            inlet  = holding.get(1348) or cloud.get(2187)   # °C water inlet plate HX
+            outlet = holding.get(1349) or cloud.get(2188)   # °C water outlet plate HX
+
+            if flow is None or inlet is None or outlet is None:
+                return None
+            if flow <= 0:
+                return 0.0
+            result = round(flow * (outlet - inlet) * 4.186 / 3600, 3)
+            if abs(result) > 30:
+                return None
+            # Cooling: outlet < inlet → result negative → return magnitude.
+            return max(-result, 0.0)
+
         return None
 
     async def async_added_to_hass(self) -> None:
@@ -310,6 +349,15 @@ class BataviaHeatEnergySensor(RestoreEntity, SensorEntity):
                 return 0.0
             return flow * (outlet - inlet) * 4.186 / 3600
 
+        if self._power_source == "cooling_power":
+            flow = data.get("input", {}).get(54)
+            inlet = data.get("holding", {}).get(1348)
+            outlet = data.get("holding", {}).get(1349)
+            if flow is None or inlet is None or outlet is None or flow <= 0:
+                return 0.0
+            # Cooling magnitude (positive while cooling, 0 while heating)
+            return max(-(flow * (outlet - inlet) * 4.186 / 3600), 0.0)
+
         return None
 
     def _integrate(self) -> None:
@@ -360,6 +408,31 @@ def _compute_thermal_power_kw(data: dict) -> float | None:
     return max(result, 0.0)
 
 
+def _compute_cooling_power_kw(data: dict) -> float | None:
+    """Compute cooling power in kW (positive magnitude) from coordinator data.
+
+    Cooling chills the water (outlet < inlet) so the raw thermal figure is
+    negative; this returns its magnitude, and 0 while heating.
+    """
+    flow = data.get("input", {}).get(54)
+    inlet = data.get("holding", {}).get(1348)
+    outlet = data.get("holding", {}).get(1349)
+    if flow is None:
+        flow = data.get("cloud", {}).get(2192)
+    if inlet is None:
+        inlet = data.get("cloud", {}).get(2187)
+    if outlet is None:
+        outlet = data.get("cloud", {}).get(2188)
+    if flow is None or inlet is None or outlet is None:
+        return None
+    if flow <= 0:
+        return 0.0
+    result = flow * (outlet - inlet) * 4.186 / 3600
+    if abs(result) > 30:
+        return None
+    return max(-result, 0.0)
+
+
 class BataviaHeatCOPCurrentSensor(SensorEntity):
     """Instantaneous COP derived from thermal power and electrical power.
 
@@ -376,12 +449,21 @@ class BataviaHeatCOPCurrentSensor(SensorEntity):
         self,
         coordinator: BataviaHeatCoordinator,
         energy_entity_id: str,
+        mode: str = "heating",
     ) -> None:
-        """Initialize the instantaneous COP sensor."""
+        """Initialize the instantaneous COP/EER sensor."""
         self.coordinator = coordinator
         self._energy_entity_id = energy_entity_id
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_cop_current"
-        self._attr_translation_key = "cop_current"
+        self._mode = mode
+        self._power_fn = (
+            _compute_cooling_power_kw if mode == "cooling" else _compute_thermal_power_kw
+        )
+        prefix = "eer" if mode == "cooling" else "cop"
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{prefix}_current"
+        self._attr_translation_key = f"{prefix}_current"
+        self._attr_icon = (
+            "mdi:snowflake-thermometer" if mode == "cooling" else "mdi:speedometer"
+        )
         self._cop_value: float | None = None
         self._prev_kwh: float | None = None
         self._prev_time: datetime | None = None
@@ -412,7 +494,7 @@ class BataviaHeatCOPCurrentSensor(SensorEntity):
         """Compute instantaneous COP from thermal power and meter delta."""
         if self.coordinator.data is None:
             return
-        thermal_kw = _compute_thermal_power_kw(self.coordinator.data)
+        thermal_kw = self._power_fn(self.coordinator.data)
 
         # Derive electrical power from kWh meter rate of change
         state = self.hass.states.get(self._energy_entity_id)
@@ -479,13 +561,22 @@ class BataviaHeatCOPPeriodSensor(RestoreEntity, SensorEntity):
         coordinator: BataviaHeatCoordinator,
         period: str,
         energy_entity_id: str,
+        mode: str = "heating",
     ) -> None:
-        """Initialize the period COP sensor."""
+        """Initialize the period COP/EER sensor."""
         self.coordinator = coordinator
         self._period = period
         self._energy_entity_id = energy_entity_id
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_cop_{period}"
-        self._attr_translation_key = f"cop_{period}"
+        self._mode = mode
+        self._power_fn = (
+            _compute_cooling_power_kw if mode == "cooling" else _compute_thermal_power_kw
+        )
+        prefix = "eer" if mode == "cooling" else "cop"
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{prefix}_{period}"
+        self._attr_translation_key = f"{prefix}_{period}"
+        self._attr_icon = (
+            "mdi:snowflake-thermometer" if mode == "cooling" else "mdi:speedometer"
+        )
 
         self._accumulated_thermal: float = 0.0
         self._accumulated_electrical: float = 0.0
@@ -588,7 +679,7 @@ class BataviaHeatCOPPeriodSensor(RestoreEntity, SensorEntity):
         # Read current values
         thermal_kw = None
         if self.coordinator.data is not None:
-            thermal_kw = _compute_thermal_power_kw(self.coordinator.data)
+            thermal_kw = self._power_fn(self.coordinator.data)
         current_electrical = self._read_electrical_kwh()
 
         # PAIRED accumulation: only accumulate BOTH when thermal is valid.
