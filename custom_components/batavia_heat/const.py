@@ -764,6 +764,21 @@ _CLOUD_CURVE_OPTIONS: dict[int, str] = {
     17: "curve_2p_9", 18: "curve_2p_10", 19: "curve_sot_11", 20: "curve_sot_12",
 }
 
+# Cloud control-state addresses used by climate.py when only the cloud path is
+# available (no Modbus writes). These are *not* standalone entities — they are
+# the getDeviceDetailV3 control addresses (power / mode / setpoint / curve /
+# compressor) that climate.py reads and writes directly. A single source of
+# truth here so extending cloud control touches one place.
+CLOUD_CTRL_ADDRESSES: dict[str, int] = {
+    "power": 1017,          # device on/off via updateSwitchSate (bool)
+    "mode": 1021,           # 1=cool, 2=heat, 3=auto via controlOfValue
+    "cooling_setpoint": 1022,
+    "heating_setpoint": 1023,
+    "cooling_curve": 1046,    # cooling curve zone A (>0 = active)
+    "heating_curve": 1047,    # heating curve zone A (>0 = active)
+    "compressor_speed": 2072,  # compressor rpm (>0 = actively running)
+}
+
 CLOUD_REGISTERS: dict[int, dict] = {
     # ── Read-only sensors ──────────────────────────────────────────────────────
     2097: {
@@ -818,6 +833,19 @@ CLOUD_REGISTERS: dict[int, dict] = {
         "scale": 1,
         "entity_type": "sensor",
         "cloud_unique": False,
+    },
+    # 2190 = ambient_temp_0 ("0# Omgevingstemp.") — the module-0# re-report of the
+    # outdoor ambient temperature. Identical to 2099 on this unit (both 10.7℃);
+    # kept distinct because it is a separate address/pointName and could diverge
+    # on other firmware. Remove if the duplicate entity is unwanted.
+    2190: {
+        "name": "cloud_outdoor_temperature_secondary",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 1,
+        "entity_type": "sensor",
+        "cloud_unique": True,
+        "icon": "mdi:thermometer",
     },
     2102: {
         "name": "cloud_system_water_outlet_temperature",
@@ -976,6 +1004,19 @@ CLOUD_REGISTERS: dict[int, dict] = {
         "icon": "mdi:pump-off",
     },
     # ── Writable settings (always shown when cloud is configured) ─────────────
+    # 1003 = temperature unit selector ("Temp. eenheid"). Real, present register
+    # on this unit (returned in paramListV3 type=2). Enum follows the standard
+    # convention; 0=°C confirmed because the app reports every point in ℃.
+    1003: {
+        "name": "temperature_unit",
+        "device_class": None,
+        "unit": None,
+        "scale": 1,
+        "entity_type": "select",
+        "cloud_unique": True,
+        "options": {0: "celsius", 1: "fahrenheit"},
+        "icon": "mdi:thermometer",
+    },
     1024: {
         "name": "hot_water_setpoint",
         "device_class": "temperature",

@@ -53,6 +53,68 @@ DEVICE_CLASS_MAP = {
 }
 
 
+# ── Thermal-power derivation (shared by energy + COP/EER sensors) ─────────────
+# Sources (identical to the visible ``thermal_power`` calculated sensor):
+#   * Modbus: IR[54] pump flow (L/h), HR[1348]/HR[1349] plate-HX water temps (°C)
+#   * Cloud:  2192 flow (L/h), 2187/2188 plate-HX water temps (°C)
+_THERMAL_POWER_MODBUS_FLOW = 54
+_THERMAL_POWER_MODBUS_INLET = 1348
+_THERMAL_POWER_MODBUS_OUTLET = 1349
+_THERMAL_POWER_CLOUD_FLOW = 2192
+_THERMAL_POWER_CLOUD_INLET = 2187
+_THERMAL_POWER_CLOUD_OUTLET = 2188
+
+# Specific heat of water (J/g·°C) used by the thermal-power formula.
+_THERMAL_POWER_SPECIFIC_HEAT = 4.186
+# Sanity cap: a 3-8 kW monobloc peaks around ~15 kW; anything above this is a
+# bad reading and is treated as unavailable rather than fed to integrations.
+_THERMAL_POWER_MAX_KW = 30.0
+
+
+def _resolve(*values):
+    """Return the first value that is not None (Modbus preferred over cloud).
+
+    Unlike ``a or b``, this preserves an explicit ``0`` on Modbus (pump off)
+    instead of silently substituting the cloud value.
+    """
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _thermal_power_kw(data: dict, *, cooling: bool = False) -> float | None:
+    """Thermal (or cooling) power in kW from coordinator data.
+
+    Prefers Modbus plate-HX registers and falls back to the matching cloud
+    registers, so cloud-only deployments still deliver energy and COP values.
+    Returns ``None`` when any source value is missing or the magnitude is
+    implausible (>30 kW); ``0.0`` when flow <= 0.
+    """
+    holding = data.get("holding", {})
+    inp = data.get("input", {})
+    cloud = data.get("cloud", {})
+
+    flow = _resolve(inp.get(_THERMAL_POWER_MODBUS_FLOW), cloud.get(_THERMAL_POWER_CLOUD_FLOW))
+    inlet = _resolve(
+        holding.get(_THERMAL_POWER_MODBUS_INLET), cloud.get(_THERMAL_POWER_CLOUD_INLET)
+    )
+    outlet = _resolve(
+        holding.get(_THERMAL_POWER_MODBUS_OUTLET), cloud.get(_THERMAL_POWER_CLOUD_OUTLET)
+    )
+
+    if flow is None or inlet is None or outlet is None:
+        return None
+    if flow <= 0:
+        return 0.0
+    result = flow * (outlet - inlet) * _THERMAL_POWER_SPECIFIC_HEAT / 3600.0
+    if abs(result) > _THERMAL_POWER_MAX_KW:
+        return None
+    # Cooling chills the water (outlet < inlet) so the raw figure is negative;
+    # return its magnitude. Heating is already positive.
+    return max(-result, 0.0) if cooling else max(result, 0.0)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -217,45 +279,12 @@ class BataviaHeatCalculatedSensor(SensorEntity):
         if self._key == "thermal_power":
             # thermal_power = flow_rate(L/h) × (outlet−inlet)(°C) × 4.186(J/g·°C) / 3600
             # Result in kW. Modbus data preferred; cloud data used as fallback.
-            holding = data.get("holding", {})
-            inp = data.get("input", {})
-            cloud = data.get("cloud", {})
-
-            flow   = inp.get(54)       or cloud.get(2192)   # L/h
-            inlet  = holding.get(1348) or cloud.get(2187)   # °C water inlet plate HX
-            outlet = holding.get(1349) or cloud.get(2188)   # °C water outlet plate HX
-
-            if flow is None or inlet is None or outlet is None:
-                return None
-            if flow <= 0:
-                return 0.0
-            result = round(flow * (outlet - inlet) * 4.186 / 3600, 3)
-            # Sanity check: 3-8kW heat pump, max ~15kW realistic
-            if abs(result) > 30:
-                return None
-            # Heating mode: thermal power should be positive
-            return max(result, 0.0)
+            return _thermal_power_kw(data)
 
         if self._key == "cooling_power":
             # cooling_power = flow_rate(L/h) × (inlet−outlet)(°C) × 4.186 / 3600
             # Positive magnitude while cooling (outlet < inlet); 0 while heating.
-            holding = data.get("holding", {})
-            inp = data.get("input", {})
-            cloud = data.get("cloud", {})
-
-            flow   = inp.get(54)       or cloud.get(2192)   # L/h
-            inlet  = holding.get(1348) or cloud.get(2187)   # °C water inlet plate HX
-            outlet = holding.get(1349) or cloud.get(2188)   # °C water outlet plate HX
-
-            if flow is None or inlet is None or outlet is None:
-                return None
-            if flow <= 0:
-                return 0.0
-            result = round(flow * (outlet - inlet) * 4.186 / 3600, 3)
-            if abs(result) > 30:
-                return None
-            # Cooling: outlet < inlet → result negative → return magnitude.
-            return max(-result, 0.0)
+            return _thermal_power_kw(data, cooling=True)
 
         return None
 
@@ -340,23 +369,11 @@ class BataviaHeatEnergySensor(RestoreEntity, SensorEntity):
                 return None
             return val / 1000.0 if self._power_unit_watts else val
 
-        # Calculated sensor: compute inline
+        # Calculated sensor: thermal/cooling power with Modbus→cloud fallback.
         if self._power_source == "thermal_power":
-            flow = data.get("input", {}).get(54)
-            inlet = data.get("holding", {}).get(1348)
-            outlet = data.get("holding", {}).get(1349)
-            if flow is None or inlet is None or outlet is None or flow <= 0:
-                return 0.0
-            return flow * (outlet - inlet) * 4.186 / 3600
-
+            return _thermal_power_kw(data)
         if self._power_source == "cooling_power":
-            flow = data.get("input", {}).get(54)
-            inlet = data.get("holding", {}).get(1348)
-            outlet = data.get("holding", {}).get(1349)
-            if flow is None or inlet is None or outlet is None or flow <= 0:
-                return 0.0
-            # Cooling magnitude (positive while cooling, 0 while heating)
-            return max(-(flow * (outlet - inlet) * 4.186 / 3600), 0.0)
+            return _thermal_power_kw(data, cooling=True)
 
         return None
 
@@ -393,51 +410,11 @@ class BataviaHeatEnergySensor(RestoreEntity, SensorEntity):
         )
 
 
-def _compute_thermal_power_kw(data: dict) -> float | None:
-    """Compute thermal power in kW from coordinator data."""
-    flow = data.get("input", {}).get(54)
-    inlet = data.get("holding", {}).get(1348)
-    outlet = data.get("holding", {}).get(1349)
-    if flow is None or inlet is None or outlet is None:
-        return None
-    if flow <= 0:
-        return 0.0
-    result = flow * (outlet - inlet) * 4.186 / 3600
-    if abs(result) > 30:
-        return None
-    return max(result, 0.0)
-
-
-def _compute_cooling_power_kw(data: dict) -> float | None:
-    """Compute cooling power in kW (positive magnitude) from coordinator data.
-
-    Cooling chills the water (outlet < inlet) so the raw thermal figure is
-    negative; this returns its magnitude, and 0 while heating.
-    """
-    flow = data.get("input", {}).get(54)
-    inlet = data.get("holding", {}).get(1348)
-    outlet = data.get("holding", {}).get(1349)
-    if flow is None:
-        flow = data.get("cloud", {}).get(2192)
-    if inlet is None:
-        inlet = data.get("cloud", {}).get(2187)
-    if outlet is None:
-        outlet = data.get("cloud", {}).get(2188)
-    if flow is None or inlet is None or outlet is None:
-        return None
-    if flow <= 0:
-        return 0.0
-    result = flow * (outlet - inlet) * 4.186 / 3600
-    if abs(result) > 30:
-        return None
-    return max(-result, 0.0)
-
-
 class BataviaHeatCOPCurrentSensor(SensorEntity):
     """Instantaneous COP derived from thermal power and electrical power.
 
     Electrical power is computed from the rate of change of the external
-    kWh meter. COP = thermal_power_kw / electrical_power_kw.
+    kWh meter. COP = _thermal_power_kw / electrical_power_kw.
     """
 
     _attr_has_entity_name = True
@@ -455,8 +432,8 @@ class BataviaHeatCOPCurrentSensor(SensorEntity):
         self.coordinator = coordinator
         self._energy_entity_id = energy_entity_id
         self._mode = mode
-        self._power_fn = (
-            _compute_cooling_power_kw if mode == "cooling" else _compute_thermal_power_kw
+        self._power_fn = lambda data: _thermal_power_kw(
+            data, cooling=(mode == "cooling")
         )
         prefix = "eer" if mode == "cooling" else "cop"
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{prefix}_current"
@@ -568,8 +545,8 @@ class BataviaHeatCOPPeriodSensor(RestoreEntity, SensorEntity):
         self._period = period
         self._energy_entity_id = energy_entity_id
         self._mode = mode
-        self._power_fn = (
-            _compute_cooling_power_kw if mode == "cooling" else _compute_thermal_power_kw
+        self._power_fn = lambda data: _thermal_power_kw(
+            data, cooling=(mode == "cooling")
         )
         prefix = "eer" if mode == "cooling" else "cop"
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{prefix}_{period}"

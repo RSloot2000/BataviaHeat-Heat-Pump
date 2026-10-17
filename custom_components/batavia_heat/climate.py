@@ -15,7 +15,7 @@ from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONNECTION_CLOUD, DOMAIN, MANUFACTURER, MODEL
+from .const import CONNECTION_CLOUD, CLOUD_CTRL_ADDRESSES, DOMAIN, MANUFACTURER, MODEL
 from .coordinator import BataviaHeatCoordinator
 from .entity import BataviaHeatEntity
 
@@ -37,14 +37,17 @@ REG_COMPRESSOR = 1283     # HR[1283]: Compressor running (0/1)
 REG_POWER_MODE = 6465     # HR[6465]: N01 power mode (0=std,1=powerful,2=eco,3=auto)
 
 # Cloud control addresses (from getDeviceDetailV3, NOT paramListV3).
-# Used when only the cloud connection is available (no Modbus writes).
-CLOUD_POWER_ADDRESS = 1017   # device on/off via updateSwitchSate (bool)
-CLOUD_MODE_ADDRESS = 1021    # 1=cool, 2=heat, 3=auto via controlOfValue
-CLOUD_COOL_SETPOINT = 1022   # cooling target temperature
-CLOUD_HEAT_SETPOINT = 1023   # heating target temperature
-CLOUD_COOL_CURVE = 1046      # cooling curve zone A (>0 = active)
-CLOUD_HEAT_CURVE = 1047      # heating curve zone A (>0 = active)
-CLOUD_COMPRESSOR_SPEED = 2072  # compressor rpm (>0 = actively running)
+# Authoritative source is const.CLOUD_CTRL_ADDRESSES; these role-named aliases
+# keep the call sites readable. Used when only the cloud connection is available
+# (no Modbus writes).
+_CLOUD_CTRL = CLOUD_CTRL_ADDRESSES
+CLOUD_POWER_ADDRESS = _CLOUD_CTRL["power"]
+CLOUD_MODE_ADDRESS = _CLOUD_CTRL["mode"]
+CLOUD_COOL_SETPOINT = _CLOUD_CTRL["cooling_setpoint"]
+CLOUD_HEAT_SETPOINT = _CLOUD_CTRL["heating_setpoint"]
+CLOUD_COOL_CURVE = _CLOUD_CTRL["cooling_curve"]
+CLOUD_HEAT_CURVE = _CLOUD_CTRL["heating_curve"]
+CLOUD_COMPRESSOR_SPEED = _CLOUD_CTRL["compressor_speed"]
 
 # Working-mode register value ↔ HVAC mode
 _MODE_TO_HVAC = {1: HVACMode.COOL, 2: HVACMode.HEAT, 3: HVACMode.AUTO}
@@ -83,6 +86,10 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
             "name": "climate",
             "icon": "mdi:heat-pump",
         })
+        # The base entity sets translation_key to "climate", but the only climate
+        # translation lives under entity.climate.heat_pump. Point at it so the
+        # name resolves from translations (and stays translatable to nl).
+        self._attr_translation_key = "heat_pump"
         self._attr_supported_features = (
             ClimateEntityFeature.TARGET_TEMPERATURE
             | ClimateEntityFeature.PRESET_MODE

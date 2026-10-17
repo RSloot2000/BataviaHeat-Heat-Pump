@@ -162,6 +162,11 @@ class BataviaCloudGateway:
         ) as resp:
             resp.raise_for_status()
             body = await resp.json(content_type=None)
+            # Persist session cookies so write requests carry the same context.
+            # aiohttp's response.cookies is a SimpleCookie; store the raw values.
+            self._cookies = {
+                name: cookie.value for name, cookie in resp.cookies.items()
+            }
 
         try:
             self._check_response(body, "authenticate")
@@ -171,10 +176,6 @@ class BataviaCloudGateway:
         result = body.get("object_result", {})
         self._token   = result.get("x-token")
         self._user_id = str(result.get("user_id", ""))
-        self._cookies = {}
-        # Persist cookies so write requests carry the same session context.
-        # (aiohttp response.cookies is a SimpleCookie)
-        # We only need the raw string values.
         _LOGGER.debug("Cloud authentication succeeded for %s", self._username)
 
     async def is_session_valid(self) -> bool:

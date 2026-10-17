@@ -1,0 +1,10 @@
+reload:
+  name: Reload
+  description: >-
+    Reload the BataviaHeat R290 integration(s), applying new entity options and
+    connection changes without restarting Home Assistant.
+refresh_data:
+  name: Refresh data
+  description: >-
+    Force an immediate cloud / Modbus poll of every BataviaHeat R290 device so
+    entities update right away instead of waiting for the next scheduled poll.

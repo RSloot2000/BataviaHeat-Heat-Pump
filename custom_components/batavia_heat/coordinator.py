@@ -765,6 +765,11 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         url = options.get(CONF_OFFLOAD_URL, "").strip()
         if not url:
             return
+        # Skip cloud-only polls: holding/input are empty there, so the snapshot
+        # would carry no register data — only ts/host/slave_id. Nothing worth
+        # storing on disk or consolidating into snapshots.db.
+        if not data.get("holding") and not data.get("input"):
+            return
         payload = {
             "ts": dt_util.utcnow().isoformat(),
             "host": getattr(self, "_host", None),

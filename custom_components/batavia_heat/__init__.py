@@ -5,7 +5,7 @@ import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import DOMAIN
@@ -45,7 +45,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator.async_consolidate_snapshots(),
         name="batavia_heat_consolidate_startup",
     )
+
+    # Register integration services once, regardless of how many entries exist.
+    _async_register_services(hass)
     return True
+
+
+def _async_register_services(hass: HomeAssistant) -> None:
+    """Register BataviaHeat services exactly once across all config entries."""
+    if hass.services.has_service(f"{DOMAIN}.reload"):
+        return
+
+    async def _async_reload(_call: ServiceCall) -> None:
+        """Reload every BataviaHeat config entry (apply options without a restart)."""
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            await hass.config_entries.async_reload(entry.entry_id)
+
+    async def _async_refresh_data(_call: ServiceCall) -> None:
+        """Force an immediate cloud/Modbus poll of every configured device."""
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            coordinator = hass.data[DOMAIN].get(entry.entry_id)
+            if coordinator is not None:
+                hass.async_create_task(
+                    coordinator.async_refresh(),
+                    name=f"batavia_heat_refresh_{entry.entry_id}",
+                )
+
+    hass.services.async_register(DOMAIN, "reload", _async_reload)
+    hass.services.async_register(DOMAIN, "refresh_data", _async_refresh_data)
 
 
 async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -58,5 +85,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         coordinator: BataviaHeatCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
         await coordinator.async_close()
+
+        # Drop the services only once the very last entry is gone, so multiple
+        # entries never lose access while another still needs them.
+        if not hass.config_entries.async_entries(DOMAIN):
+            hass.services.async_remove(f"{DOMAIN}.reload")
+            hass.services.async_remove(f"{DOMAIN}.refresh_data")
 
     return unload_ok
