@@ -5,7 +5,7 @@
 [![Hassfest](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/actions/workflows/hassfest.yml/badge.svg)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/actions/workflows/hassfest.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/releases)
 [![GitHub Release Date](https://img.shields.io/github/release-date/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/releases)
-![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.2.0%2B-blue?logo=home-assistant)
+![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.4.0%2B-blue?logo=home-assistant)
 [![License](https://img.shields.io/github/license/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/blob/main/LICENSE)
 [![GitHub issues](https://img.shields.io/github/issues/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/issues)
 ![Maintenance](https://img.shields.io/maintenance/yes/2026)

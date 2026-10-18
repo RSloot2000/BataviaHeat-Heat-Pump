@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import struct
 from datetime import timedelta
 from typing import Any
@@ -108,6 +109,32 @@ _SINGLE_READ_TIMEOUT = 2.0    # Max wait for one Modbus response (seconds)
 _CYCLE_DETECT_TIMEOUT = 5.0   # Max wait for tablet cycle-end marker (seconds)
 _NO_TABLET_TIMEOUT = 1.0      # Shorter cycle-detect timeout when tablet known absent
 _NO_TABLET_THRESHOLD = 3      # Consecutive misses before switching to direct mode
+
+# ── Shared RS485 bus timing (DR164/RTU gateway) ───────────────────────
+# The DR164/RTU gateway shares one half-duplex RS485 segment with the
+# manufacturer's tablet and any externally-spliced second master, so two
+# frames can collide on the wire. We only control our own transmit timing,
+# so we (1) wait until the line is actually idle before sending, and (2)
+# jitter retries so sustained collisions don't keep resynchronizing with
+# another master's periodic polling.
+#
+# Bus-quiet gate: wait for >= ~3.5 character times of line idle before
+# transmitting (the Modbus master-off rule), so a frame just finished by
+# another master clears the line first. Char time = framesize/baud
+# (~4 ms @ 9600 8E2, ~8 ms @ 19200). Baud is fixed by the tablet, so size
+# this conservatively; raise on a very slow bus, trim if updates lag.
+_BUS_QUIET_S = 0.02
+# Give up waiting for the bus to go quiet after this long rather than
+# stalling forever while another master keeps talking.
+_BUS_QUIET_MAX_WAIT_S = 2.0
+
+# Retry/backoff for a frame lost to a collision. Grows slowly with the
+# attempt number plus uniform jitter so repeated collisions don't lock onto
+# another master's cadence. Bounded so a bad bus can't stall an update.
+_RETRY_BACKOFF_BASE_S = 0.05
+_RETRY_BACKOFF_MAX_S = 0.5
+_RETRY_JITTER_MIN_S = 0.0
+_RETRY_JITTER_MAX_S = 0.25
 
 # Build lookup: address → (dict_key, reg_info) for fast dispatch after bulk read
 _ADDR_MAP: dict[int, tuple[str, dict]] = {}
@@ -369,6 +396,37 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._tx_counter = (self._tx_counter % 65000) + 1
         return self._tx_counter
 
+    async def _wait_for_bus_quiet(self) -> None:
+        """Block until the RS485 line has been idle for >= _BUS_QUIET_S.
+
+        Polls the socket for incoming bytes; any activity resets the idle
+        timer, so a second master that keeps transmitting delays us instead
+        of racing our frame. Bounded by _BUS_QUIET_MAX_WAIT_S so we never
+        stall forever while another master keeps the line busy.
+        """
+        loop = asyncio.get_running_loop()
+        last_activity = loop.time()
+        deadline = last_activity + _BUS_QUIET_MAX_WAIT_S
+        while loop.time() < deadline:
+            frames = await self._tcp_read_available(timeout=_BUS_QUIET_S)
+            if frames:
+                last_activity = loop.time()
+            elif loop.time() - last_activity >= _BUS_QUIET_S:
+                # Idle for a full quiet interval — safe to transmit.
+                return
+        # Bus stayed busy past the safety cap; proceed rather than hang.
+
+    def _jittered_backoff(self, attempt: int) -> float:
+        """Jittered backoff (seconds) before a retried frame.
+
+        Grows with the attempt number plus uniform jitter so repeated
+        collisions don't keep resynchronizing with another master's periodic
+        polling. Bounded by _RETRY_BACKOFF_MAX_S.
+        """
+        base = _RETRY_BACKOFF_BASE_S * attempt
+        jitter = random.uniform(_RETRY_JITTER_MIN_S, _RETRY_JITTER_MAX_S)
+        return min(base + jitter, _RETRY_BACKOFF_MAX_S)
+
     async def _tcp_read_available(self, timeout: float = 0.05) -> list[dict]:
         """Read all available data from TCP socket, parse into frames."""
         assert self._tcp_reader is not None
@@ -436,6 +494,11 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         assert self._tcp_writer is not None
         tx_id = self._next_tx_id()
         frame = self._build_tcp_read(tx_id, self._slave_id, fc, start, count)
+        # Wait until the line is actually idle before transmitting, so a
+        # frame just finished by another master clears the bus first
+        # (this replaces the old fixed inter-frame gap with a real
+        # bus-quiet check).
+        await self._wait_for_bus_quiet()
         self._tcp_writer.write(frame)
         await self._tcp_writer.drain()
 
@@ -522,6 +585,10 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             pending: dict[int, int] = {i: 0 for i in range(len(_TCP_READ_GROUPS))}
             results: dict[int, list[int]] = {}
             max_cycles = _MAX_READ_RETRIES * 2  # Safety limit
+            # Jittered backoff applied between retry cycles so sustained
+            # collisions don't keep resynchronizing with another master's
+            # periodic polling.
+            backoff_pending = 0.0
 
             for _cycle in range(max_cycles):
                 if not pending:
@@ -536,6 +603,13 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
                     break
 
+                # Back off (jittered) before retrying groups that failed last
+                # cycle, so retries don't land on the same cadence as another
+                # master's polling.
+                if backoff_pending > 0:
+                    await asyncio.sleep(backoff_pending)
+                    backoff_pending = 0.0
+
                 synced = await self._tcp_wait_for_cycle_end()
                 if synced:
                     _LOGGER.debug(
@@ -549,6 +623,7 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
 
                 completed: list[int] = []
+                max_backoff = 0.0
                 for idx in sorted(pending.keys()):
                     # Re-check write_pending between each register group
                     if self._write_pending > 0:
@@ -572,9 +647,19 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             "FC%d [%d] x%d attempt %d failed, will retry",
                             fc, start, count, pending[idx],
                         )
+                        # Jittered backoff keyed on this group's attempt count,
+                        # kept as the max across groups so one slow retry
+                        # doesn't get overridden by a fast one.
+                        max_backoff = max(
+                            max_backoff, self._jittered_backoff(pending[idx]),
+                        )
 
                 for idx in completed:
                     del pending[idx]
+
+                # Arm a jittered backoff before retrying any group that failed
+                # this cycle; consumed at the top of the next loop iteration.
+                backoff_pending = max_backoff
 
             # Process all successful results
             for idx, values in results.items():
@@ -603,9 +688,10 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._write_pending += 1
         try:
             async with self._bus_lock:
-                # Sync to tablet cycle to avoid bus collision
+                # Sync to tablet cycle to avoid bus collision, then wait
+                # until the line is genuinely idle before transmitting.
                 await self._tcp_wait_for_cycle_end()
-
+                await self._wait_for_bus_quiet()
                 self._tcp_writer.write(frame)
                 await self._tcp_writer.drain()
 
@@ -1147,6 +1233,11 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self._async_connect_tcp()
             last_err: str = "unknown"
             for attempt in range(1, _MAX_READ_RETRIES + 1):
+                # Back off (jittered) before retrying so repeated write
+                # collisions don't keep resynchronizing with another master's
+                # periodic polling.
+                if attempt > 1:
+                    await asyncio.sleep(self._jittered_backoff(attempt))
                 tx_id = self._next_tx_id()
                 frame = self._build_tcp_write_register(
                     tx_id, self._slave_id, address, value,
@@ -1189,6 +1280,11 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self._async_connect_tcp()
             last_err: str = "unknown"
             for attempt in range(1, _MAX_READ_RETRIES + 1):
+                # Back off (jittered) before retrying so repeated write
+                # collisions don't keep resynchronizing with another master's
+                # periodic polling.
+                if attempt > 1:
+                    await asyncio.sleep(self._jittered_backoff(attempt))
                 tx_id = self._next_tx_id()
                 frame = self._build_tcp_write_coil(
                     tx_id, self._slave_id, address, value,
