@@ -9,5 +9,5 @@
   "issue_tracker": "https://github.com/RSloot2000/BataviaHeat-Heat-Pump/issues",
   "homeassistant": "2024.2.0",
   "requirements": ["pymodbus>=3.6.0"],
-  "version": "0.5.2"
+  "version": "0.5.3"
 }

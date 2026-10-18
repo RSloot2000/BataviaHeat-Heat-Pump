@@ -53,7 +53,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 def _async_register_services(hass: HomeAssistant) -> None:
     """Register BataviaHeat services exactly once across all config entries."""
-    if hass.services.has_service(f"{DOMAIN}.reload"):
+    if hass.services.has_service(DOMAIN, "reload"):
         return
 
     async def _async_reload(_call: ServiceCall) -> None:
@@ -89,7 +89,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Drop the services only once the very last entry is gone, so multiple
         # entries never lose access while another still needs them.
         if not hass.config_entries.async_entries(DOMAIN):
-            hass.services.async_remove(f"{DOMAIN}.reload")
-            hass.services.async_remove(f"{DOMAIN}.refresh_data")
+            hass.services.async_remove(DOMAIN, "reload")
+            hass.services.async_remove(DOMAIN, "refresh_data")
 
     return unload_ok
