@@ -1134,4 +1134,17 @@ CLOUD_REGISTERS: dict[int, dict] = {
         "icon": "mdi:led-strip-variant",
     },
 }
-
+# Newntide cascade: additional cloud sensors for module 1#
+for _module_1_address, _module_0_address in {
+    2266: 2187,  # Water inlet temperature
+    2267: 2188,  # Water outlet temperature
+    2270: 2191,  # Pump target speed
+    2271: 2192,  # Pump flow rate
+    2272: 2193,  # Pump control signal
+    2273: 2194,  # Pump feedback signal
+    2274: 2195,  # Pump fault information
+}.items():
+    CLOUD_REGISTERS[_module_1_address] = {
+        **CLOUD_REGISTERS[_module_0_address],
+        "cloud_unique": True,
+    }
