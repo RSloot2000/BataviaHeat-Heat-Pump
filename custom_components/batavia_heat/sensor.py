@@ -84,36 +84,55 @@ def _resolve(*values):
 
 
 def _thermal_power_kw(data: dict, *, cooling: bool = False) -> float | None:
-    """Thermal (or cooling) power in kW from coordinator data.
+    """Return total cascade thermal/cooling power in kW.
 
-    Prefers Modbus plate-HX registers and falls back to the matching cloud
-    registers, so cloud-only deployments still deliver energy and COP values.
-    Returns ``None`` when any source value is missing or the magnitude is
-    implausible (>30 kW); ``0.0`` when flow <= 0.
+    Module 0# prefers its Modbus readings and falls back to cloud values.
+    Module 1# currently uses its distinct cloud readings. If either module's
+    readings are incomplete, the available module is still reported on its own.
     """
     holding = data.get("holding", {})
     inp = data.get("input", {})
     cloud = data.get("cloud", {})
 
-    flow = _resolve(inp.get(_THERMAL_POWER_MODBUS_FLOW), cloud.get(_THERMAL_POWER_CLOUD_FLOW))
-    inlet = _resolve(
-        holding.get(_THERMAL_POWER_MODBUS_INLET), cloud.get(_THERMAL_POWER_CLOUD_INLET)
-    )
-    outlet = _resolve(
-        holding.get(_THERMAL_POWER_MODBUS_OUTLET), cloud.get(_THERMAL_POWER_CLOUD_OUTLET)
+    def module_power(flow, inlet, outlet):
+        if flow is None or inlet is None or outlet is None:
+            return None
+        if flow <= 0:
+            return 0.0
+        result = flow * (outlet - inlet) * _THERMAL_POWER_SPECIFIC_HEAT / 3600.0
+        if abs(result) > _THERMAL_POWER_MAX_KW:
+            return None
+        # Cooling chills the water (outlet < inlet), so reverse its sign.
+        return max(-result, 0.0) if cooling else max(result, 0.0)
+
+    # Module 0#: local Modbus preferred; cloud fallback supports cloud-only setups.
+    module_0 = module_power(
+        _resolve(inp.get(_THERMAL_POWER_MODBUS_FLOW), cloud.get(_THERMAL_POWER_CLOUD_FLOW)),
+        _resolve(
+            holding.get(_THERMAL_POWER_MODBUS_INLET),
+            cloud.get(_THERMAL_POWER_CLOUD_INLET),
+        ),
+        _resolve(
+            holding.get(_THERMAL_POWER_MODBUS_OUTLET),
+            cloud.get(_THERMAL_POWER_CLOUD_OUTLET),
+        ),
     )
 
-    if flow is None or inlet is None or outlet is None:
-        return None
-    if flow <= 0:
-        return 0.0
-    result = flow * (outlet - inlet) * _THERMAL_POWER_SPECIFIC_HEAT / 3600.0
-    if abs(result) > _THERMAL_POWER_MAX_KW:
-        return None
-    # Cooling chills the water (outlet < inlet) so the raw figure is negative;
-    # return its magnitude. Heating is already positive.
-    return max(-result, 0.0) if cooling else max(result, 0.0)
+    # Module 1#: addresses 2266/2267 are water inlet/outlet (°C);
+    # 2271 is pump flow (L/h). These are exposed by the cascade cloud sensors.
+    module_1 = module_power(
+        cloud.get(2271),
+        cloud.get(2266),
+        cloud.get(2267),
+    )
 
+    available = [power for power in (module_0, module_1) if power is not None]
+    if not available:
+        return None
+    total = sum(available)
+    if abs(total) > _THERMAL_POWER_MAX_KW:
+        return None
+    return total
 
 async def async_setup_entry(
     hass: HomeAssistant,
