@@ -1130,8 +1130,43 @@ CLOUD_REGISTERS: dict[int, dict] = {
         "scale": 1,
         "entity_type": "select",
         "cloud_unique": True,
-        "options": {0: "off", 1: "on"},
         "icon": "mdi:led-strip-variant",
     },
 }
+
+# ── Module 1# (second outdoor unit) cascade sensors ───────────────────────
+# Second unit of a two-unit Newntide cascade. These reuse the module 0# cloud
+# metadata (issue #3) instead of re-listing every field, and force
+# cloud_unique=True so the module 1# sensors stay exposed alongside module 0#
+# when the cloud connection is configured. The module 1# addresses are distinct
+# from the module 0# group above, so both units coexist.
+#
+# Module 0# -> Module 1# address mapping (2266/2267 water temps, 2271 pump flow
+# feed _thermal_power_kw in sensor.py; the rest are pump telemetry):
+#   2187 -> 2266  (water inlet temperature)
+#   2188 -> 2267  (water outlet temperature)
+#   2191 -> 2270  (pump target speed)
+#   2192 -> 2271  (pump flow rate)
+#   2193 -> 2272  (pump control signal)
+#   2194 -> 2273  (pump feedback signal)
+#   2195 -> 2274  (pump fault information)
+for _module_1_address, _module_0_address in {
+    2266: 2187,  # Water inlet temperature
+    2267: 2188,  # Water outlet temperature
+    2270: 2191,  # Pump target speed
+    2271: 2192,  # Pump flow rate
+    2272: 2193,  # Pump control signal
+    2273: 2194,  # Pump feedback signal
+    2274: 2195,  # Pump fault information
+}.items():
+    # Reuse the module 0# metadata, but give the module 1# sensor a distinct
+    # display name (cloud_ -> cloud_module_1_) so a two-unit cascade never
+    # exposes two sensors with the same name (which Home Assistant would
+    # suffix with "_2"). Field values other than the name are shared.
+    _module_0_info = CLOUD_REGISTERS[_module_0_address]
+    CLOUD_REGISTERS[_module_1_address] = {
+        **_module_0_info,
+        "name": _module_0_info["name"].replace("cloud_", "cloud_module_1_", 1),
+        "cloud_unique": True,
+    }
 

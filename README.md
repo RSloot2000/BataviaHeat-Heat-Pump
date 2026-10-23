@@ -8,6 +8,7 @@
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.4.0%2B-blue?logo=home-assistant)
 [![License](https://img.shields.io/github/license/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/blob/main/LICENSE)
 [![GitHub issues](https://img.shields.io/github/issues/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/issues)
+[![GitHub PRs](https://img.shields.io/github/issues-pr/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/pulls)
 ![Maintenance](https://img.shields.io/maintenance/yes/2026)
 
 Custom Home Assistant integration for the **BataviaHeat R290 3–8 kW Monobloc** heat pump. Supports four connection types:

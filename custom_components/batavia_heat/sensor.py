@@ -54,9 +54,14 @@ DEVICE_CLASS_MAP = {
 
 
 # ── Thermal-power derivation (shared by energy + COP/EER sensors) ─────────────
-# Sources (identical to the visible ``thermal_power`` calculated sensor):
-#   * Modbus: IR[54] pump flow (L/h), HR[1348]/HR[1349] plate-HX water temps (°C)
-#   * Cloud:  2192 flow (L/h), 2187/2188 plate-HX water temps (°C)
+# Derived from the same plate-HX readings as the visible ``thermal_power``
+# calculated sensor, summed across every running cascade unit:
+#   * Module 0#: Modbus IR[54] flow / HR[1348]/HR[1349] temps, falling back to
+#                cloud 2192 / 2187 / 2188 (cloud-only deployments).
+#   * Module 1# (cascade 2nd unit): cloud 2271 flow / 2266 / 2267 (see
+#                CLOUD_REGISTERS). Reported on its own if module 0# is missing.
+# The two modules' power is summed so a two-unit cascade reports total energy
+# and COP/EER.
 _THERMAL_POWER_MODBUS_FLOW = 54
 _THERMAL_POWER_MODBUS_INLET = 1348
 _THERMAL_POWER_MODBUS_OUTLET = 1349
@@ -84,35 +89,61 @@ def _resolve(*values):
 
 
 def _thermal_power_kw(data: dict, *, cooling: bool = False) -> float | None:
-    """Thermal (or cooling) power in kW from coordinator data.
+    """Return total cascade thermal/cooling power in kW.
 
-    Prefers Modbus plate-HX registers and falls back to the matching cloud
-    registers, so cloud-only deployments still deliver energy and COP values.
-    Returns ``None`` when any source value is missing or the magnitude is
-    implausible (>30 kW); ``0.0`` when flow <= 0.
+    Module 0# prefers its Modbus readings and falls back to cloud values, so
+    cloud-only deployments still deliver energy and COP values. Module 1# (a
+    cascade's second unit) uses its distinct cloud readings. If one module's
+    readings are missing, the other module is still reported on its own, and
+    the available modules are summed.
     """
     holding = data.get("holding", {})
     inp = data.get("input", {})
     cloud = data.get("cloud", {})
 
-    flow = _resolve(inp.get(_THERMAL_POWER_MODBUS_FLOW), cloud.get(_THERMAL_POWER_CLOUD_FLOW))
-    inlet = _resolve(
-        holding.get(_THERMAL_POWER_MODBUS_INLET), cloud.get(_THERMAL_POWER_CLOUD_INLET)
-    )
-    outlet = _resolve(
-        holding.get(_THERMAL_POWER_MODBUS_OUTLET), cloud.get(_THERMAL_POWER_CLOUD_OUTLET)
+    def module_power(flow: float | None, inlet: float | None, outlet: float | None) -> float | None:
+        """Power (kW) for one module, or ``None`` if any input is missing."""
+        if flow is None or inlet is None or outlet is None:
+            return None
+        if flow <= 0:
+            return 0.0
+        result = flow * (outlet - inlet) * _THERMAL_POWER_SPECIFIC_HEAT / 3600.0
+        if abs(result) > _THERMAL_POWER_MAX_KW:
+            return None
+        # Cooling chills the water (outlet < inlet), so reverse its sign.
+        return max(-result, 0.0) if cooling else max(result, 0.0)
+
+    # Module 0#: local Modbus preferred; cloud fallback supports cloud-only setups.
+    module_0 = module_power(
+        _resolve(inp.get(_THERMAL_POWER_MODBUS_FLOW), cloud.get(_THERMAL_POWER_CLOUD_FLOW)),
+        _resolve(
+            holding.get(_THERMAL_POWER_MODBUS_INLET),
+            cloud.get(_THERMAL_POWER_CLOUD_INLET),
+        ),
+        _resolve(
+            holding.get(_THERMAL_POWER_MODBUS_OUTLET),
+            cloud.get(_THERMAL_POWER_CLOUD_OUTLET),
+        ),
     )
 
-    if flow is None or inlet is None or outlet is None:
+    # Module 1#: 2266/2267 are water inlet/outlet (°C); 2271 is pump flow (L/h).
+    module_1 = module_power(
+        cloud.get(2271),
+        cloud.get(2266),
+        cloud.get(2267),
+    )
+
+    available = [power for power in (module_0, module_1) if power is not None]
+    if not available:
         return None
-    if flow <= 0:
-        return 0.0
-    result = flow * (outlet - inlet) * _THERMAL_POWER_SPECIFIC_HEAT / 3600.0
-    if abs(result) > _THERMAL_POWER_MAX_KW:
+    # Each active module can contribute up to the per-module cap, so the sane
+    # aggregate limit scales with how many modules are reporting. This lets a
+    # healthy two-unit cascade pass while a single implausible module still
+    # drops out (that is caught per-module above).
+    aggregate_max_kw = len(available) * _THERMAL_POWER_MAX_KW
+    if abs(sum(available)) > aggregate_max_kw:
         return None
-    # Cooling chills the water (outlet < inlet) so the raw figure is negative;
-    # return its magnitude. Heating is already positive.
-    return max(-result, 0.0) if cooling else max(result, 0.0)
+    return sum(available)
 
 
 async def async_setup_entry(
