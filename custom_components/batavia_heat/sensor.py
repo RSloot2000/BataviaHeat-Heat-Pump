@@ -23,7 +23,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import CALCULATED_SENSORS, CLOUD_REGISTERS, CONF_ENERGY_ENTITY, DOMAIN, INPUT_REGISTERS, HOLDING_REGISTERS
+from .const import (
+    CALCULATED_SENSORS,
+    CLOUD_REGISTERS,
+    CONF_ENERGY_ENTITY,
+    CONF_ENERGY_ENTITY_MODULE_0,
+    CONF_ENERGY_ENTITY_MODULE_1,
+    DOMAIN,
+    INPUT_REGISTERS,
+    HOLDING_REGISTERS,
+)
 from .coordinator import BataviaHeatCoordinator
 from .entity import BataviaHeatEntity
 
@@ -88,14 +97,21 @@ def _resolve(*values):
     return None
 
 
-def _thermal_power_kw(data: dict, *, cooling: bool = False) -> float | None:
-    """Return total cascade thermal/cooling power in kW.
+def _thermal_power_kw(
+    data: dict, *, cooling: bool = False, module: "int | str | None" = None
+) -> float | None:
+    """Return cascade thermal/cooling power in kW.
 
-    Module 0# prefers its Modbus readings and falls back to cloud values, so
-    cloud-only deployments still deliver energy and COP values. Module 1# (a
-    cascade's second unit) uses its distinct cloud readings. If one module's
-    readings are missing, the other module is still reported on its own, and
-    the available modules are summed.
+    ``module`` selects which unit's power to return:
+
+      * ``None`` or ``"all"`` (default) → sum every active module (total
+        cascade power, used for energy integration and system-wide COP/EER).
+      * ``0`` → module 0# only; ``1`` → module 1# only (used for per-device
+        COP/EER, so each unit's efficiency is reported on its own).
+
+    Per-module readings are sanity-capped individually; the aggregate sum is
+    capped by ``len(active) * _THERMAL_POWER_MAX_KW`` so a healthy two-unit
+    cascade is not dropped while a single implausible module still is.
     """
     holding = data.get("holding", {})
     inp = data.get("input", {})
@@ -133,6 +149,13 @@ def _thermal_power_kw(data: dict, *, cooling: bool = False) -> float | None:
         cloud.get(2267),
     )
 
+    # Per-device selection: hand back a single unit's power for COP/EER.
+    if module == 0:
+        return module_0
+    if module == 1:
+        return module_1
+
+    # Default (None / "all"): total cascade power for energy + system COP/EER.
     available = [power for power in (module_0, module_1) if power is not None]
     if not available:
         return None
@@ -140,10 +163,49 @@ def _thermal_power_kw(data: dict, *, cooling: bool = False) -> float | None:
     # aggregate limit scales with how many modules are reporting. This lets a
     # healthy two-unit cascade pass while a single implausible module still
     # drops out (that is caught per-module above).
-    aggregate_max_kw = len(available) * _THERMAL_POWER_MAX_KW
-    if abs(sum(available)) > aggregate_max_kw:
+    if abs(sum(available)) > len(available) * _THERMAL_POWER_MAX_KW:
         return None
     return sum(available)
+
+
+def _add_cop_sensors(
+    entities: list,
+    coordinator: BataviaHeatCoordinator,
+    meter_entity_id: str,
+    module: "int | None",
+    device_label: str | None,
+) -> None:
+    """Add instantaneous + period COP/EER sensors for one unit's meter.
+
+    ``module`` scopes the thermal power to a single cascade unit (None =
+    system-wide sum); ``meter_entity_id`` is that unit's electrical meter. A
+    per-device meter yields a true per-device COP/EER instead of system-wide.
+    """
+    entities.append(
+        BataviaHeatCOPCurrentSensor(
+            coordinator, meter_entity_id, mode="heating",
+            module=module, device_label=device_label,
+        )
+    )
+    entities.append(
+        BataviaHeatCOPCurrentSensor(
+            coordinator, meter_entity_id, mode="cooling",
+            module=module, device_label=device_label,
+        )
+    )
+    for period in ("today", "week", "month", "year", "alltime"):
+        entities.append(
+            BataviaHeatCOPPeriodSensor(
+                coordinator, period, meter_entity_id, mode="heating",
+                module=module, device_label=device_label,
+            )
+        )
+        entities.append(
+            BataviaHeatCOPPeriodSensor(
+                coordinator, period, meter_entity_id, mode="cooling",
+                module=module, device_label=device_label,
+            )
+        )
 
 
 async def async_setup_entry(
@@ -202,22 +264,29 @@ async def async_setup_entry(
         power_unit_watts=False,
     ))
 
-    # COP (heating) + EER (cooling) sensors — only when an energy entity is set
-    energy_entity_id = entry.options.get(CONF_ENERGY_ENTITY, "")
-    if energy_entity_id:
-        entities.append(BataviaHeatCOPCurrentSensor(coordinator, energy_entity_id))
-        entities.append(
-            BataviaHeatCOPCurrentSensor(coordinator, energy_entity_id, mode="cooling")
+    # COP (heating) + EER (cooling) sensors — only when an energy entity is set.
+    #
+    # Per-device COP/EER takes priority: when a cascade's units each have their
+    # own energy meter configured, each unit's COP/EER is computed against that
+    # unit's meter (true per-device COP). Otherwise fall back to a single
+    # system-wide meter (backward compatible with existing setups).
+    meter_0 = entry.options.get(CONF_ENERGY_ENTITY_MODULE_0, "")
+    meter_1 = entry.options.get(CONF_ENERGY_ENTITY_MODULE_1, "")
+    system_meter = entry.options.get(CONF_ENERGY_ENTITY, "")
+
+    if meter_0 or meter_1:
+        if meter_0:
+            _add_cop_sensors(
+                entities, coordinator, meter_0, module=0, device_label=None
+            )
+        if meter_1:
+            _add_cop_sensors(
+                entities, coordinator, meter_1, module=1, device_label="Unit 1#"
+            )
+    elif system_meter:
+        _add_cop_sensors(
+            entities, coordinator, system_meter, module=None, device_label=None
         )
-        for period in ("today", "week", "month", "year", "alltime"):
-            entities.append(
-                BataviaHeatCOPPeriodSensor(coordinator, period, energy_entity_id)
-            )
-            entities.append(
-                BataviaHeatCOPPeriodSensor(
-                    coordinator, period, energy_entity_id, mode="cooling"
-                )
-            )
 
     async_add_entities(entities)
 
@@ -456,25 +525,81 @@ class BataviaHeatCOPCurrentSensor(SensorEntity):
     def __init__(
         self,
         coordinator: BataviaHeatCoordinator,
-        energy_entity_id: str,
+        meter_entity_id: str,
         mode: str = "heating",
+        module: "int | None" = None,
+        device_label: str | None = None,
     ) -> None:
-        """Initialize the instantaneous COP/EER sensor."""
+        """Initialize the instantaneous COP/EER sensor.
+
+        ``module`` selects which unit's thermal power feeds the COP: ``None``
+        → system-wide (sum of all units); ``0``/``1`` → that unit only.
+        ``meter_entity_id`` is the electrical meter for that unit — a cascade's
+        second unit must be measured against its own meter so its COP reflects
+        its own electrical draw, not the system-wide one.
+        """
         self.coordinator = coordinator
-        self._energy_entity_id = energy_entity_id
+        self._meter_entity_id = meter_entity_id
         self._mode = mode
+        self._module = module
         self._power_fn = lambda data: _thermal_power_kw(
-            data, cooling=(mode == "cooling")
+            data, cooling=(mode == "cooling"), module=module
         )
         prefix = "eer" if mode == "cooling" else "cop"
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{prefix}_current"
-        self._attr_translation_key = f"{prefix}_current"
+        module_suffix = f"_module_{module}" if module is not None else "_system"
+        self._attr_unique_id = (
+            f"{coordinator.config_entry.entry_id}_{prefix}_current{module_suffix}"
+        )
+        self._attr_translation_key = f"{prefix}_current{module_suffix}"
+        self._device_label = device_label
         self._attr_icon = (
             "mdi:snowflake-thermometer" if mode == "cooling" else "mdi:speedometer"
         )
         self._cop_value: float | None = None
         self._prev_kwh: float | None = None
         self._prev_time: datetime | None = None
+
+    @property
+    def device_info(self):
+        """Group a cascade's second unit under its own device so per-device
+        COP/EER shows up on that unit's page, not merged into the main device."""
+        from .const import MANUFACTURER, MODEL
+        from homeassistant.helpers.device_registry import DeviceInfo
+        if self._module is None:
+            identifier = self.coordinator.config_entry.entry_id
+            name = "BataviaHeat R290"
+        else:
+            identifier = f"{self.coordinator.config_entry.entry_id}_module_{self._module}"
+            name = "BataviaHeat R290 (Cascade Unit {0})".format(self._module)
+        return DeviceInfo(
+            identifiers={(DOMAIN, identifier)},
+            name=name,
+            manufacturer=MANUFACTURER,
+            model=MODEL,
+        )
+
+    @property
+    def _electrical_kw(self) -> float | None:
+        """Instantaneous electrical power (kW) from this unit's meter."""
+        state = self.hass.states.get(self._meter_entity_id)
+        if state is None or state.state in ("unknown", "unavailable"):
+            return None
+        try:
+            current_kwh = float(state.state)
+        except (ValueError, TypeError):
+            return None
+        now = datetime.now(timezone.utc)
+        if current_kwh is not None and self._prev_kwh is not None and self._prev_time is not None:
+            dt_hours = (now - self._prev_time).total_seconds() / 3600.0
+            if 0 < dt_hours < 0.5:
+                delta = current_kwh - self._prev_kwh
+                if delta >= 0:
+                    self._prev_kwh = current_kwh
+                    self._prev_time = now
+                    return delta / dt_hours
+        self._prev_kwh = current_kwh
+        self._prev_time = now
+        return None
 
     @property
     def device_info(self):
@@ -568,20 +693,33 @@ class BataviaHeatCOPPeriodSensor(RestoreEntity, SensorEntity):
         self,
         coordinator: BataviaHeatCoordinator,
         period: str,
-        energy_entity_id: str,
+        meter_entity_id: str,
         mode: str = "heating",
+        module: "int | None" = None,
+        device_label: str | None = None,
     ) -> None:
-        """Initialize the period COP/EER sensor."""
+        """Initialize the period COP/EER sensor.
+
+        ``module`` selects which unit's thermal power is integrated: ``None``
+        → system-wide (sum of all units); ``0``/``1`` → that unit only. A
+        cascade's second unit must integrate its own thermal power against its
+        own meter so its period COP reflects that unit, not the system.
+        """
         self.coordinator = coordinator
         self._period = period
-        self._energy_entity_id = energy_entity_id
+        self._meter_entity_id = meter_entity_id
         self._mode = mode
+        self._module = module
         self._power_fn = lambda data: _thermal_power_kw(
-            data, cooling=(mode == "cooling")
+            data, cooling=(mode == "cooling"), module=module
         )
         prefix = "eer" if mode == "cooling" else "cop"
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{prefix}_{period}"
-        self._attr_translation_key = f"{prefix}_{period}"
+        module_suffix = f"_module_{module}" if module is not None else "_system"
+        self._attr_unique_id = (
+            f"{coordinator.config_entry.entry_id}_{prefix}_{period}{module_suffix}"
+        )
+        self._attr_translation_key = f"{prefix}_{period}{module_suffix}"
+        self._device_label = device_label
         self._attr_icon = (
             "mdi:snowflake-thermometer" if mode == "cooling" else "mdi:speedometer"
         )
@@ -602,6 +740,25 @@ class BataviaHeatCOPPeriodSensor(RestoreEntity, SensorEntity):
         return DeviceInfo(
             identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
             name="BataviaHeat R290",
+            manufacturer=MANUFACTURER,
+            model=MODEL,
+        )
+
+    @property
+    def device_info(self):
+        """Group a cascade's second unit under its own device so per-device
+        period COP/EER shows up on that unit's page."""
+        from .const import MANUFACTURER, MODEL
+        from homeassistant.helpers.device_registry import DeviceInfo
+        if self._module is None:
+            identifier = self.coordinator.config_entry.entry_id
+            name = "BataviaHeat R290"
+        else:
+            identifier = f"{self.coordinator.config_entry.entry_id}_module_{self._module}"
+            name = "BataviaHeat R290 (Cascade Unit {0})".format(self._module)
+        return DeviceInfo(
+            identifiers={(DOMAIN, identifier)},
+            name=name,
             manufacturer=MANUFACTURER,
             model=MODEL,
         )
@@ -644,8 +801,8 @@ class BataviaHeatCOPPeriodSensor(RestoreEntity, SensorEntity):
         return "alltime"
 
     def _read_electrical_kwh(self) -> float | None:
-        """Read current kWh value from the external energy entity."""
-        state = self.hass.states.get(self._energy_entity_id)
+        """Read current kWh value from this unit's meter."""
+        state = self.hass.states.get(self._meter_entity_id)
         if state is None or state.state in ("unknown", "unavailable"):
             return None
         try:

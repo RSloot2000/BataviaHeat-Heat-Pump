@@ -29,6 +29,8 @@ from .const import (
     CONF_CLOUD_USERNAME,
     CONF_CONNECTION_TYPE,
     CONF_ENERGY_ENTITY,
+    CONF_ENERGY_ENTITY_MODULE_0,
+    CONF_ENERGY_ENTITY_MODULE_1,
     CONF_HOST,
     CONF_MODBUS_CONNECTION_TYPE,
     CONF_MODBUS_ENABLED,
@@ -449,6 +451,8 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
             offload_url="",
             offload_db_max_mb=DEFAULT_OFFLOAD_DB_MAX_MB,
             dir_options=dir_options,
+            energy_entity_module_0="",
+            energy_entity_module_1="",
         )
         return self.async_show_form(step_id="advanced", data_schema=schema)
 
@@ -481,6 +485,12 @@ class BataviaHeatOptionsFlow(OptionsFlow):
                 CONF_OFFLOAD_DB_MAX_MB, DEFAULT_OFFLOAD_DB_MAX_MB
             ),
             dir_options=dir_options,
+            energy_entity_module_0=entry.options.get(
+                CONF_ENERGY_ENTITY_MODULE_0, ""
+            ),
+            energy_entity_module_1=entry.options.get(
+                CONF_ENERGY_ENTITY_MODULE_1, ""
+            ),
         )
         return self.async_show_form(step_id="init", data_schema=schema)
 
@@ -511,6 +521,8 @@ def _build_advanced_schema(
     dir_options: list[str],
     entry: ConfigEntry | None = None,
     modbus_type: str | None = None,
+    energy_entity_module_0: str = "",
+    energy_entity_module_1: str = "",
 ) -> vol.Schema:
     if offload_url and offload_url not in dir_options:
         dir_options.append(offload_url)
@@ -558,12 +570,31 @@ def _build_advanced_schema(
         ] = vol.All(vol.Coerce(int), vol.Range(min=0, max=247))
 
     # ── COP + register offload options ───────────────────────────────────────
+    # Per-cascade-unit energy meters. A two-unit cascade has two electrical
+    # draws, so assigning a meter per unit lets each unit's COP/EER be computed
+    # against its own power (true per-device efficiency).
     fields.update(
         {
             vol.Optional(
                 CONF_ENERGY_ENTITY,
                 description={"suggested_value": energy_entity} if energy_entity else {},
             ): EntitySelector(EntitySelectorConfig(domain="sensor", device_class="energy")),
+            vol.Optional(
+                CONF_ENERGY_ENTITY_MODULE_0,
+                description={
+                    "suggested_value": energy_entity_module_0
+                } if energy_entity_module_0 else {},
+            ): EntitySelector(
+                EntitySelectorConfig(domain="sensor", device_class="energy")
+            ),
+            vol.Optional(
+                CONF_ENERGY_ENTITY_MODULE_1,
+                description={
+                    "suggested_value": energy_entity_module_1
+                } if energy_entity_module_1 else {},
+            ): EntitySelector(
+                EntitySelectorConfig(domain="sensor", device_class="energy")
+            ),
             vol.Optional(CONF_OFFLOAD_ENABLED, default=offload_enabled): bool,
             vol.Optional(
                 CONF_OFFLOAD_URL,
@@ -592,6 +623,8 @@ def _normalize_advanced_options(
 ) -> dict[str, Any]:
     options = dict(user_input)
     options.setdefault(CONF_ENERGY_ENTITY, "")
+    options.setdefault(CONF_ENERGY_ENTITY_MODULE_0, "")
+    options.setdefault(CONF_ENERGY_ENTITY_MODULE_1, "")
     options.setdefault(CONF_OFFLOAD_URL, "")
     options.setdefault(CONF_OFFLOAD_ENABLED, False)
     options.setdefault(CONF_OFFLOAD_DB_MAX_MB, DEFAULT_OFFLOAD_DB_MAX_MB)

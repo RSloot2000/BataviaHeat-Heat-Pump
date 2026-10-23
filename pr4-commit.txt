@@ -1,9 +1,0 @@
-Add cascade module 1# cloud sensors and sum cascade thermal power
-
-Expose the second outdoor unit of a Newntide cascade by reusing module 0#
-cloud metadata for addresses 2266-2274 (distinct names, cloud_unique), and
-compute total thermal/COP/EER power by summing module 0# (Modbus + cloud
-fallback) and module 1# (cloud only), with a per-module sanity cap and a
-cascade-aware aggregate limit. Add unit tests for _thermal_power_kw.
-
-Co-Authored-By: Claude Code <noreply@anthropic.com>

@@ -16,6 +16,11 @@ CONF_CONNECTION_TYPE = "connection_type"
 CONF_SERIAL_PORT = "serial_port"
 CONF_BAUDRATE = "baudrate"
 CONF_ENERGY_ENTITY = "energy_entity"
+# Per-cascade-unit energy meters, used for per-device COP/EER. A cascade's
+# second unit (module 1#) has its own electrical draw, so its efficiency can
+# only be computed against its own meter — not the system-wide one.
+CONF_ENERGY_ENTITY_MODULE_0 = "energy_entity_module_0"
+CONF_ENERGY_ENTITY_MODULE_1 = "energy_entity_module_1"
 
 CONNECTION_TCP = "tcp"          # DR164 RS485-WiFi gateway (tablet bus-sharing)
 CONNECTION_SERIAL = "serial"    # Direct USB/RS485 dongle
