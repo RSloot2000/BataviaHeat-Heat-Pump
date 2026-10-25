@@ -217,36 +217,62 @@ async def async_setup_entry(
     coordinator: BataviaHeatCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[BataviaHeatSensor] = []
 
+    # Whether this entry runs both Cloud and Modbus (cloud is preferred).
+    from .const import CONNECTION_CLOUD
+    entry = coordinator.config_entry
+    modbus_enabled = entry.data.get("modbus_enabled", False)
+
+    # Names of Modbus sensors that also have a cloud counterpart. Cloud registers
+    # live in a different address space, so counterparts are linked by entity
+    # name — explicitly via "modbus_name", or by the "cloud_" + name convention.
+    # In a "both" setup the cloud value is preferred, so the Modbus duplicate is
+    # hidden; any sensor that was only showing because the entry changed to
+    # "both" therefore disappears automatically on reload.
+    _modbus_cloud_dup_names: set[str] = set()
+    for _dup_addr, _dup_info in CLOUD_REGISTERS.items():
+        if _dup_info.get("entity_type") != "sensor" or _dup_info.get("cloud_unique", True):
+            continue
+        _dup_modbus_name = _dup_info.get("modbus_name")
+        if _dup_modbus_name:
+            _modbus_cloud_dup_names.add(_dup_modbus_name)
+        else:
+            _dup_name = _dup_info.get("name", "")
+            if _dup_name.startswith("cloud_"):
+                _modbus_cloud_dup_names.add(_dup_name[len("cloud_"):])
+
     # Sensors from input registers
     for addr, reg_info in INPUT_REGISTERS.items():
-        if reg_info.get("entity_type") == "sensor":
-            # Hide sensors whose register the selected register-map variant never
-            # reads (e.g. module-0# temps on a Newntide unit).
-            if not coordinator._is_address_read("input", addr):
-                continue
-            entities.append(BataviaHeatSensor(coordinator, "input", addr, reg_info))
+        if reg_info.get("entity_type") != "sensor":
+            continue
+        # Hide sensors whose register the selected register-map variant never
+        # reads (e.g. module-0# temps on a Newntide unit).
+        if not coordinator._is_address_read("input", addr):
+            continue
+        # In a "both" setup, hide the Modbus duplicate of a sensor that has a
+        # cloud counterpart — the cloud value is preferred.
+        if modbus_enabled and reg_info.get("name") in _modbus_cloud_dup_names:
+            continue
+        entities.append(BataviaHeatSensor(coordinator, "input", addr, reg_info))
 
     # Sensors from holding registers (read-only display)
     for addr, reg_info in HOLDING_REGISTERS.items():
-        if reg_info.get("entity_type") == "sensor":
-            if not coordinator._is_address_read("holding", addr):
-                continue
-            entities.append(BataviaHeatSensor(coordinator, "holding", addr, reg_info))
+        if reg_info.get("entity_type") != "sensor":
+            continue
+        if not coordinator._is_address_read("holding", addr):
+            continue
+        if modbus_enabled and reg_info.get("name") in _modbus_cloud_dup_names:
+            continue
+        entities.append(BataviaHeatSensor(coordinator, "holding", addr, reg_info))
 
     # Calculated sensors (derived from multiple registers)
     for key, calc_info in CALCULATED_SENSORS.items():
         entities.append(BataviaHeatCalculatedSensor(coordinator, key, calc_info))
 
-    # Cloud sensors (when cloud connection is configured)
-    from .const import CONNECTION_CLOUD
-    entry = coordinator.config_entry
+    # Cloud sensors — shown whenever cloud is configured. In a "both" setup the
+    # cloud value is preferred over the Modbus duplicate hidden above.
     if entry.data.get("connection_type") == CONNECTION_CLOUD:
-        modbus_enabled = entry.data.get("modbus_enabled", False)
         for addr, reg_info in CLOUD_REGISTERS.items():
             if reg_info.get("entity_type") != "sensor":
-                continue
-            # Only show cloud-duplicate sensors when Modbus is NOT configured
-            if not reg_info.get("cloud_unique", True) and modbus_enabled:
                 continue
             entities.append(BataviaHeatSensor(coordinator, "cloud", addr, reg_info))
 

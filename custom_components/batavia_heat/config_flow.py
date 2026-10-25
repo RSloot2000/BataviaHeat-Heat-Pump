@@ -578,6 +578,7 @@ class BataviaHeatOptionsFlow(OptionsFlow):
                 # Adding cloud to a Modbus-only entry → result is "both".
                 # Preserve the existing Modbus transport details so they are not
                 # dropped when the entry becomes cloud + Modbus.
+                self._mode = CONNECTION_MODE_BOTH
                 self._modbus_type = _effective_modbus_type(entry) or CONNECTION_TCP
                 self._modbus_details = {
                     k: entry.data.get(k) for k in _MODBUS_DETAIL_KEYS
@@ -767,7 +768,7 @@ class BataviaHeatOptionsFlow(OptionsFlow):
         new_data.update(self._cloud_creds)
 
         try:
-            await self.hass.config_entries.async_update_entry(entry, data=new_data)
+            self.hass.config_entries.async_update_entry(entry, data=new_data)
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Failed to update entry connection settings: %s", err)
 

@@ -888,6 +888,7 @@ CLOUD_REGISTERS: dict[int, dict] = {
         "scale": 1,
         "entity_type": "sensor",
         "cloud_unique": False,
+        "modbus_name": "water_outlet_temperature",
     },
     2106: {
         "name": "cloud_hp_water_outlet_temperature",
@@ -896,6 +897,7 @@ CLOUD_REGISTERS: dict[int, dict] = {
         "scale": 1,
         "entity_type": "sensor",
         "cloud_unique": False,
+        "modbus_name": "water_outlet_temperature",
     },
     2142: {
         "name": "cloud_fin_coil_temperature",
