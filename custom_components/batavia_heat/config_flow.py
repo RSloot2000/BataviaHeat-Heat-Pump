@@ -769,8 +769,14 @@ def _effective_modbus_type(entry: ConfigEntry) -> str | None:
     return ctype
 
 
-def _current(entry: ConfigEntry, key: str, default: Any) -> Any:
-    """Return the effective current value (options override data)."""
+def _current(entry: ConfigEntry | None, key: str, default: Any) -> Any:
+    """Return the effective current value (options override data).
+
+    When ``entry`` is None (e.g. a fresh options flow with no prior entry),
+    there is no stored value, so the supplied default is returned.
+    """
+    if entry is None:
+        return default
     return entry.options.get(key, entry.data.get(key, default))
 
 
