@@ -220,11 +220,17 @@ async def async_setup_entry(
     # Sensors from input registers
     for addr, reg_info in INPUT_REGISTERS.items():
         if reg_info.get("entity_type") == "sensor":
+            # Hide sensors whose register the selected register-map variant never
+            # reads (e.g. module-0# temps on a Newntide unit).
+            if not coordinator._is_address_read("input", addr):
+                continue
             entities.append(BataviaHeatSensor(coordinator, "input", addr, reg_info))
 
     # Sensors from holding registers (read-only display)
     for addr, reg_info in HOLDING_REGISTERS.items():
         if reg_info.get("entity_type") == "sensor":
+            if not coordinator._is_address_read("holding", addr):
+                continue
             entities.append(BataviaHeatSensor(coordinator, "holding", addr, reg_info))
 
     # Calculated sensors (derived from multiple registers)
@@ -602,18 +608,6 @@ class BataviaHeatCOPCurrentSensor(SensorEntity):
         return None
 
     @property
-    def device_info(self):
-        """Return device info."""
-        from .const import MANUFACTURER, MODEL
-        from homeassistant.helpers.device_registry import DeviceInfo
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
-            name="BataviaHeat R290",
-            manufacturer=MANUFACTURER,
-            model=MODEL,
-        )
-
-    @property
     def available(self) -> bool:
         """Return if entity is available."""
         return self.coordinator.last_update_success and self.coordinator.data is not None
@@ -630,7 +624,7 @@ class BataviaHeatCOPCurrentSensor(SensorEntity):
         thermal_kw = self._power_fn(self.coordinator.data)
 
         # Derive electrical power from kWh meter rate of change
-        state = self.hass.states.get(self._energy_entity_id)
+        state = self.hass.states.get(self._meter_entity_id)
         electrical_kw: float | None = None
         if state and state.state not in ("unknown", "unavailable"):
             try:
@@ -731,18 +725,6 @@ class BataviaHeatCOPPeriodSensor(RestoreEntity, SensorEntity):
         self._period_key: str | None = None
         self._last_update: datetime | None = None
         self._cop_value: float | None = None
-
-    @property
-    def device_info(self):
-        """Return device info."""
-        from .const import MANUFACTURER, MODEL
-        from homeassistant.helpers.device_registry import DeviceInfo
-        return DeviceInfo(
-            identifiers={(DOMAIN, self.coordinator.config_entry.entry_id)},
-            name="BataviaHeat R290",
-            manufacturer=MANUFACTURER,
-            model=MODEL,
-        )
 
     @property
     def device_info(self):

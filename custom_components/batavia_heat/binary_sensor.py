@@ -32,6 +32,8 @@ async def async_setup_entry(
 
     for addr, reg_info in DISCRETE_INPUTS.items():
         if reg_info.get("entity_type") == "binary_sensor":
+            if not coordinator._is_address_read("discrete", addr):
+                continue
             entities.append(
                 BataviaHeatBinarySensor(coordinator, "discrete", addr, reg_info)
             )
@@ -39,6 +41,8 @@ async def async_setup_entry(
     # Binary sensors from holding registers (e.g. compressor ON/OFF)
     for addr, reg_info in HOLDING_REGISTERS.items():
         if reg_info.get("entity_type") == "binary_sensor":
+            if not coordinator._is_address_read("holding", addr):
+                continue
             entities.append(
                 BataviaHeatBinarySensor(coordinator, "holding", addr, reg_info)
             )

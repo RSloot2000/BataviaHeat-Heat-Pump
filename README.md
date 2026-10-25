@@ -1,4 +1,4 @@
-# BataviaHeat R290 - Home Assistant Integration
+# BataviaHeat/Newntide R290 - Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 [![HACS validation](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/actions/workflows/hacs.yml/badge.svg)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/actions/workflows/hacs.yml)
@@ -20,28 +20,30 @@ Custom Home Assistant integration for the **BataviaHeat R290 3–8 kW Monobloc**
 
 Cloud and a local Modbus connection can be combined: cloud acts as primary (setpoints, cloud-only sensors) and Modbus provides faster updates and deeper register access as backup/extension.
 
-## Compatibility
+## Supported devices
 
-The BataviaHeat R290 is manufactured by **Newntide** and sold under various brand names. This integration will likely work with other Newntide-based heat pumps that share the same Modbus register map, such as:
+The integration currently supports the following R290 monobloc heat pumps (3–8 kW):
 
-- BataviaHeat R290 3–8 kW (confirmed)
-- Other Newntide OEM/white-label rebrands with identical controller hardware
+- **BataviaHeat R290** 3–8 kW Monobloc (confirmed)
+- **Newntide R290** 3–8 kW Monobloc (confirmed)
 
-If you have a Newntide-based heat pump from a different brand and can confirm compatibility, please [open an issue](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/issues) so we can add it to the list. Or if you have the means, scan the registers yourself and help expand the project.
+> **Two brands, two Modbus maps:** BataviaHeat and Newntide pumps are the same R290 hardware line but ship with **different Modbus register maps**. Select the register map that matches your unit's brand and firmware — using the wrong one will read/write the wrong registers. The Newntide register map is documented in the source spreadsheet [`docs/BP-MODBUS_Engress-Version.1.xlsx`](docs/BP-MODBUS_Engress-Version.1.xlsx), which can also be found on the Newntide website. No such file has been found for the bataviaheat registers, but an attempt at decoding the Modbus map was made — those registers can be found in: [docs/tablet-parameters-en.md](docs/tablet-parameters-en.md) or [docs/tablet-parameters.md](docs/tablet-parameters.md).
+
+This integration will likely work with other Newntide-based heat pumps that share the same Modbus register map, such as other Newntide OEM/white-label rebrands with identical controller hardware.
+
+If you have a Newntide-based heat pump from a different brand and can confirm compatibility, please [open an issue](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/issues) so we can add it to the list. Or if you have the means, scan the registers yourself and help expand the project. 
+I can only provide support for the Bataviaheat pump, since that is the only pump I have access to.
 
 ## Table of contents
 
 - [Features](#features)
-- [Compatibility](#compatibility)
+- [Supported devices](#supported-devices)
 - [Hardware Requirements](#hardware-requirements)
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Entities](#entities)
-  - [Sensors](#sensors)
-  - [Binary sensors](#binary-sensors)
-  - [Switches](#switches)
-  - [Select entities](#select-entities)
-  - [Number entities](#number-entities)
+  - [Modbus entities](#modbus-entities)
+  - [Cloud entities](#cloud-entities)
   - [Climate](#climate)
 - [COP calculation](#cop-calculation)
 - [Troubleshooting](#troubleshooting)
@@ -180,51 +182,28 @@ Optionally push every register snapshot to a NAS/HTTP endpoint or local director
 
 ## Entities
 
-### Sensors
+The full Modbus register map and installer parameters are maintained in the docs and kept there rather than duplicated in this README:
 
-#### Modbus sensors
+- **[Installer parameters & full register map — English](docs/tablet-parameters-en.md)`
+- **[Installer parameters & full register map — Dutch](docs/tablet-parameters.md)`
 
-| Entity | Register | Unit | Description |
-|--------|----------|------|-------------|
-| Ambient temperature | IR[22] | °C | Outdoor temperature measured by the heat pump |
-| Fin coil temperature | IR[23] | °C | Evaporator fin temperature |
-| Suction temperature | IR[24] | °C | Compressor suction line temperature |
-| Discharge temperature | IR[25] | °C | Compressor discharge line temperature |
-| Low pressure | IR[32] | bar | Refrigerant low-side pressure |
-| High pressure | IR[33] | bar | Refrigerant high-side pressure |
-| Pump target speed | IR[53] | rpm | Water pump target speed |
-| Pump flow rate | IR[54] | L/h | Water flow rate |
-| Pump control signal | IR[66] | % | Pump PWM control signal |
-| Pump feedback signal | IR[142] | % | Pump feedback signal |
-| Condenser temperature | IR[135] | °C | Refrigerant-side condenser temperature (module 0#) |
-| Module water outlet temperature | IR[137] | °C | Module water outlet |
-| Module ambient temperature | IR[138] | °C | Module ambient |
-| Operational status | HR[768] | - | Operating state (0 = off) |
-| Heating target setpoint | HR[772] | °C | Calculated heating curve setpoint (read-only) |
-| Compressor discharge temperature | HR[773] | °C | Compressor discharge (from outdoor unit) |
-| Water outlet temperature | HR[776] | °C | System water outlet (from outdoor unit) |
-| Plate HX water inlet temperature | HR[1348] | °C | Plate heat exchanger water inlet (T78) |
-| Plate HX water outlet temperature | HR[1349] | °C | Plate heat exchanger water outlet (T79) |
-| Total water outlet temperature | HR[1350] | °C | Total water outlet after plate HX (T80) |
-| Buffer inlet temperature | HR[3230] | °C | Buffer tank inlet (water entering buffer) |
-| Buffer outlet temperature | HR[3231] | °C | Buffer tank outlet (water leaving buffer) |
-| Thermal power | calculated | kW | flow × ΔT × 4.186 / 3600 |
-| Energy delivered | integrated | kWh | Riemann sum of thermal power |
-| Cooling power | calculated | kW | Cooling magnitude (positive while cooling, 0 while heating) |
-| Cooling energy delivered | integrated | kWh | Riemann sum of cooling power |
-| COP (current) | calculated | — | Real-time coefficient of performance (heating)¹ |
-| COP (today) | calculated | — | Average COP for today¹ |
-| COP (this week) | calculated | — | Average COP for the current week¹ |
-| COP (this month) | calculated | — | Average COP for the current month¹ |
-| COP (this year) | calculated | — | Average COP for the current year¹ |
-| COP (all time) | calculated | — | Average COP since installation¹ |
-| EER (current/today/week/month/year/all time) | calculated | — | Cooling efficiency, same periods as COP¹ |
+The tables below summarize the entities the integration exposes. Register-backed entities (sensors, binary sensor, switches, selects, numbers) are cross-referenced to the full map in the docs above; cloud-only entities (EcoHome API) are shown in full since they have no Modbus register.
 
-> ¹ COP sensors are only created when an external kWh meter entity is configured in the integration options. See [COP calculation](#cop-calculation).
+### Modbus entities
 
-> HR[768], HR[773] and HR[776] go to 0 when the compressor is off. This is normal behaviour.
+The integration exposes Modbus **sensors**, one **binary sensor**, **switches**, **select entities** and **number entities** mapped to the heat pump's holding/input registers and coils. The complete register-level reference (with ranges, defaults and fault codes) is in the English/Dutch docs linked above. In short:
 
-#### Cloud sensors (only when cloud connection is configured)
+- **Sensors** — temperatures, pressures, pump data, operational status, thermal power, energy delivered, COP/EER (see [COP calculation](#cop-calculation))
+- **Binary sensor** — compressor running (HR[1283])
+- **Switches** — unit power, silent mode, silent level 2 (pulse-coils, FC05, 0xFF00; each function has a separate ON/OFF coil, no toggle)
+- **Select entities** — power mode, auxiliary/external heat source mode, pump operating mode & control type, lower-return pump sterilization/timed
+- **Number entities** — heating-curve limits, temperature limits, auto-cool/holiday setpoints, water-pump tuning
+
+> HR[768], HR[773] and HR[776] return 0 when the compressor is off — this is normal behaviour. COP sensors are only created when an external kWh meter entity is configured (see [COP calculation](#cop-calculation)).
+
+### Cloud entities
+
+#### Cloud sensors
 
 | Entity | Cloud address | Unit | Description |
 |--------|--------------|------|-------------|
@@ -257,37 +236,7 @@ When cloud is configured **without** a Modbus backup, the following additional c
 | Pump control signal (cloud) | 2193 | IR[66] |
 | Pump feedback signal (cloud) | 2194 | IR[142] |
 
-### Binary sensors
-
-| Entity | Register | Description |
-|--------|----------|-------------|
-| Compressor running | HR[1283] | Whether the compressor is currently active |
-
-### Switches
-
-| Entity | ON coil | OFF coil | Description |
-|--------|---------|----------|-------------|
-| Unit power | 1024 | 1025 | Turn the heat pump on or off |
-| Silent mode | 1073 | 1074 | Enable or disable silent mode |
-| Silent level 2 | 1076 | 1075 | Switch between silent level 1 and 2 |
-
-Switches use **pulse-coils** (FC05, 0xFF00). Each function has a separate ON and OFF coil; there is no toggle. Coil state is not readable; the UI uses assumed state.
-
-### Select entities
-
-#### Modbus select entities
-
-| Entity | Register | Options | Description |
-|--------|----------|---------|-------------|
-| Power mode | HR[6465] | Standard, Powerful, Eco, Auto | N01 operating power mode |
-| Auxiliary heater mode | HR[7189] | Off, Heating only, DHW only, Heating+DHW | M39 auxiliary electric heater |
-| External heat source mode | HR[7190] | Off, Heating only, DHW only, Heating+DHW | M40 external heat source |
-| Pump operating mode | HR[6472] | Continuous, Stop at temp, Intermittent | P01 water pump mode |
-| Pump control type | HR[7232] | Speed, Flow, On-Off, Power | P02 pump control type |
-| Lower return pump sterilization | HR[7238] | Off, On | P07 |
-| Lower return pump timed | HR[7239] | Off, On | P08 |
-
-#### Cloud select entities (only when cloud connection is configured)
+#### Cloud select entities
 
 | Entity | Cloud address | Options | Description |
 |--------|--------------|---------|-------------|
@@ -300,30 +249,7 @@ Switches use **pulse-coils** (FC05, 0xFF00). Each function has a separate ON and
 
 Cloud selects are always shown when cloud is configured. When Modbus is also configured, the local Modbus variants are preferred for reading; cloud selects provide a remote-write path independent of local connectivity.
 
-### Number entities
-
-#### Modbus number entities
-
-| Entity | Register | Range | Description |
-|--------|----------|-------|-------------|
-| Max heating temperature | HR[6402] | 0–85 °C | Maximum heating temperature |
-| Heating curve mode | HR[6426] | 0–17 | Heating curve preset selector |
-| Curve outdoor temp high | HR[6433] | −25–35 °C | Outdoor temperature at which minimum water temp applies |
-| Curve outdoor temp low | HR[6434] | −25–35 °C | Outdoor temperature at which maximum water temp applies |
-| Curve water temp mild | HR[6435] | 25–65 °C | Water temperature at mild outdoor conditions |
-| Curve water temp cold | HR[6436] | 25–65 °C | Water temperature at cold outdoor conditions |
-| Auto-cool min ambient | HR[7184] | 20–29 °C | M35 min outdoor temp for auto cooling |
-| Auto-cool max ambient | HR[7185] | 10–17 °C | M36 max outdoor temp for auto cooling |
-| Holiday heating temperature | HR[7186] | 20–25 °C | M37 holiday-away heating |
-| Holiday DHW temperature | HR[7187] | 20–25 °C | M38 holiday-away DHW |
-| Pump target speed setpoint | HR[7234] | 1000–6800 rpm | P03 pump target speed |
-| Pump manufacturer | HR[7235] | 0–8 | P04 pump manufacturer code |
-| Pump target flow setpoint | HR[7236] | 0–3600 L/h | P05 pump target flow |
-| Lower return pump interval | HR[7237] | 5–120 min | P06 lower-return pump interval |
-| Pump intermittent stop time | HR[6507] | min | P09 |
-| Pump intermittent run time | HR[6511] | min | P20 |
-
-#### Cloud number entities (only when cloud connection is configured)
+#### Cloud number entities
 
 | Entity | Cloud address | Range | Description |
 |--------|--------------|-------|-------------|
@@ -437,7 +363,7 @@ The heat pump's RS-485 connector uses a 4-wire cable with the following colour c
 | ⚪ White | A |
 | 🟢 Green | B |
 
-Connect **White (A)** to the **A+** terminal and **Green (B)** to the **B−** terminal on your RS-485 gateway or USB adapter. The red and black wires carry 12 V DC power and are **not** needed for the Modbus data connection.
+Connect **White (A)** to the **A+** terminal and **Green (B)** to the **B−** terminal on your RS-485 gateway or USB adapter. The red and black wires carry 12 V DC power and are **not** needed for the Modbus data connection (but the GND can be used as a common ground for circuits).
 
 ## License
 

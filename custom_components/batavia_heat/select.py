@@ -58,8 +58,10 @@ class BataviaHeatSelect(BataviaHeatEntity, SelectEntity):
         super().__init__(coordinator, reg_type, address, reg_info)
         self._cloud = cloud
 
-        # options dict: {raw_value: label_key, ...}
-        self._options_map: dict[int, str] = reg_info["options"]
+        # options dict: {raw_value: label_key, ...}. Default to empty so a
+        # register without an "options" entry (e.g. cloud_light_strip) doesn't
+        # crash entity setup with a KeyError.
+        self._options_map: dict[int, str] = reg_info.get("options", {})
         self._reverse_map: dict[str, int] = {v: k for k, v in self._options_map.items()}
         self._attr_options = list(self._options_map.values())
 

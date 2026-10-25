@@ -6,7 +6,15 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, MANUFACTURER, MODEL
+from .const import (
+    CONNECTION_CLOUD,
+    CONNECTION_ESP32,
+    CONNECTION_SERIAL,
+    CONNECTION_TCP,
+    DOMAIN,
+    MANUFACTURER,
+    MODEL,
+)
 from .coordinator import BataviaHeatCoordinator
 
 

@@ -34,6 +34,7 @@ from .const import (
     CONF_CLOUD_PASSWORD_HASH,
     CONF_CLOUD_USERNAME,
     CONF_CONNECTION_TYPE,
+    CONF_REGISTER_MAP,
     CONF_HOST,
     CONF_MODBUS_CONNECTION_TYPE,
     CONF_MODBUS_ENABLED,
@@ -45,6 +46,8 @@ from .const import (
     CONF_TCP_PORT,
     CONNECTION_CLOUD,
     CONNECTION_ESP32,
+    REGISTER_MAP_BATAVIA,
+    REGISTER_MAP_NEWNTIDE,
     CONNECTION_SERIAL,
     CONNECTION_TCP,
     DEFAULT_BAUDRATE,
@@ -95,11 +98,57 @@ _INPUT_READ_GROUPS: list[tuple[int, int]] = [
     (135, 8),     # IR[135-142]: HX temps, module temps, pump feedback
 ]
 
-# Combined read list for TCP: FC04 first (tablet only uses FC03 → zero
-# collision risk), then FC03 (may collide, retries handle it).
-_TCP_READ_GROUPS: list[tuple[int, int, int]] = [
-    *[(4, start, count) for start, count in _INPUT_READ_GROUPS],
-    *[(3, start, count) for start, count in _HOLDING_READ_GROUPS],
+# ── Register-map variants (issue #5) ─────────────────────────────────────
+# A "read group" is (fc, start, count, remap): fc=3 holding / fc=4 input,
+# start/count are the Modbus window, and remap is None (decode via the
+# module-0# _ADDR_MAP) or an explicit [(reg_type, address), ...] list that
+# stores each register under a canonical address with the const scaling.
+#
+# "batavia" groups match the module-0# system map (all remap=None) — the
+# default, unchanged behaviour for every unit that already reads correctly.
+# "newntide" groups remap the five low-address groups that FAIL on the Newntide
+# R290 monobloc to the doc's corrected FC04 addresses, storing each value under
+# the module-0# canonical address the entities already resolve from.
+_BATAVIA_READ_GROUPS: list[tuple[int, int, int, None]] = [
+    *(
+        (4, start, count, None) for start, count in _INPUT_READ_GROUPS
+    ),
+    *(
+        (3, start, count, None) for start, count in _HOLDING_READ_GROUPS
+    ),
+]
+
+# Newntide R290 monobloc corrected map. The five low-address groups below read
+# garbage/fail on this hardware (their module-0# addresses lie in the coil
+# domain), so we read the doc's corrected FC04 windows and remap each register
+# to its canonical address:
+#   IR[1310-1311] low/high pressure  → input[32, 33]
+#   IR[1352-1355] pump telemetry      → input[53, 54, 66, 142]
+#   FC04[912-913] run flags 0/1       → holding[912, 913] (entity mirrors)
+# The remaining groups read fine on Newntide and keep remap=None.
+_NEWNTIDE_READ_GROUPS: list[tuple[int, int, int, list[tuple[str, int]] | None]] = [
+    # FC04 — input registers (live sensor data; corrected addresses)
+    (4, 22, 4, None),  # IR[22-25]: ambient/fin/suction/discharge temps (reads fine)
+    (4, 1310, 2, [("input", 32), ("input", 33)]),  # low/high pressure
+    (4, 1352, 4, [("input", 53), ("input", 54), ("input", 66), ("input", 142)]),  # pump telemetry
+    (4, 912, 2, [("holding", 912), ("holding", 913)]),  # run flags 0/1 (mirrors)
+    # FC03 — holding registers (read fine on Newntide; standard decode)
+    (3, 768, 1, None),     # operational status
+    (3, 772, 1, None),     # heating target setpoint
+    (3, 773, 1, None),     # compressor discharge temperature
+    (3, 776, 1, None),     # water outlet temperature
+    (3, 1283, 1, None),    # compressor running
+    (3, 1348, 3, None),    # plate HX water temps + total water outlet
+    (3, 3230, 2, None),    # buffer inlet/outlet temperatures
+    (3, 6400, 1, None),    # working mode
+    (3, 6401, 8, None),    # cool/heat setpoints + room targets + zone B
+    (3, 6425, 12, None),   # zone A/B curves + cool/heat custom curve pts
+    (3, 6465, 1, None),    # N01 power mode
+    (3, 6472, 1, None),    # P01 pump operating mode
+    (3, 6507, 1, None),    # P09 pump intermittent stop time
+    (3, 6511, 1, None),    # P20 pump intermittent run time
+    (3, 7184, 7, None),    # M35-M40 auto-cool/holiday/aux/ext heat source
+    (3, 7232, 8, None),    # P02-P08 pump control/speed/flow/interval
 ]
 
 # Tablet bus-sharing constants
@@ -199,6 +248,12 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._slave_id = entry.options.get(
             CONF_SLAVE_ID, entry.data.get(CONF_SLAVE_ID, 1)
         )
+        # Register-map variant: which hardware's address layout to read. Defaults
+        # to the base "batavia" map; "newntide" remaps the five failing low-
+        # address groups to the Newntide R290 monobloc's corrected FC04 windows.
+        self._register_map = entry.options.get(
+            CONF_REGISTER_MAP, entry.data.get(CONF_REGISTER_MAP, REGISTER_MAP_BATAVIA)
+        )
 
         # ── Cloud state ────────────────────────────────────────────────────────
         self._cloud: BataviaCloudGateway | None = None
@@ -281,6 +336,26 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else self._connection_type
         )
 
+    @property
+    def modbus_active(self) -> bool:
+        """Return True when the Modbus transport is the active/connected one.
+
+        Modbus is active when it is the primary connection (TCP/ESP32/Serial),
+        or when a cloud-primary entry has Modbus enabled as a backup/extension.
+        Entities use this (with ``cloud_active``) to hide the non-active
+        transport — only one transport is visible at a time, Modbus preferred.
+        """
+        if self._connection_type in (CONNECTION_TCP, CONNECTION_ESP32, CONNECTION_SERIAL):
+            return True
+        if self._connection_type == CONNECTION_CLOUD:
+            return bool(self._modbus_enabled)
+        return False
+
+    @property
+    def cloud_active(self) -> bool:
+        """Return True when the cloud transport is configured as primary."""
+        return self._connection_type == CONNECTION_CLOUD
+
     # ── Shared register processing ──
 
     @staticmethod
@@ -299,6 +374,78 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if reg_info.get("signed", True) and raw > 32767:
                 raw = raw - 65536
             data[dict_key][addr] = raw * scale
+
+    @staticmethod
+    def _remap_registers(
+        data: dict[str, Any],
+        remap: list[tuple[str, int]],
+        registers: list[int],
+    ) -> None:
+        """Store raw registers under canonical addresses with const scaling.
+
+        Used by the "newntide" variant: five low-address groups read garbage on
+        the Newntide R290 monobloc, so we read the doc's corrected FC04 windows
+        and store each value under the module-0# canonical address the entities
+        already resolve from (e.g. FC04[1310-1311] → input[32,33]). Sign
+        handling and scaling mirror ``_process_registers`` exactly.
+        """
+        for (reg_type, addr), raw in zip(remap, registers):
+            if raw in SENSOR_DISCONNECTED:
+                continue
+            source = INPUT_REGISTERS if reg_type == "input" else HOLDING_REGISTERS
+            info = source.get(addr, {})
+            if info.get("signed", True) and raw > 32767:
+                raw = raw - 65536
+            data.setdefault(reg_type, {})[addr] = raw * info.get("scale", 1)
+
+    def _read_groups(self) -> list:
+        """Return the read groups for the configured register-map variant.
+
+        "batavia" (default) → module-0# system map, unchanged behaviour.
+        "newntide" → corrected FC04 groups for the Newntide R290 monobloc.
+        """
+        if getattr(self, "_register_map", REGISTER_MAP_BATAVIA) == REGISTER_MAP_NEWNTIDE:
+            return _NEWNTIDE_READ_GROUPS
+        return _BATAVIA_READ_GROUPS
+
+    def _decode_read(
+        self,
+        data: dict[str, Any],
+        start: int,
+        registers: list[int],
+        remap: list[tuple[str, int]] | None,
+    ) -> None:
+        """Decode a read window: standard _ADDR_MAP (remap is None) or an
+        explicit canonical remap list (remap is a list)."""
+        if remap is None:
+            self._process_registers(data, start, registers)
+        else:
+            self._remap_registers(data, remap, registers)
+
+    def _read_addresses(self) -> set[tuple[str, int]]:
+        """Return the (reg_type, address) pairs the active variant reads.
+
+        Used at platform setup to hide entities whose canonical register the
+        selected register-map variant never reads. For "batavia" this is the
+        module-0# system map (every defined input/holding entity falls within a
+        read range); for "newntide" the five remapped low-address groups expose
+        different physical registers, so entities for addresses this variant
+        doesn't read (e.g. the module-0# water/ambient temps at IR[137]/IR[138])
+        are filtered out instead of showing stale garbage.
+        """
+        addresses: set[tuple[str, int]] = set()
+        for fc, start, count, remap in self._read_groups():
+            if remap is not None:
+                addresses.update(remap)
+            else:
+                reg_type = "holding" if fc == 3 else "input"
+                addresses.update((reg_type, start + i) for i in range(count))
+        return addresses
+
+    def _is_address_read(self, reg_type: str, address: int) -> bool:
+        """Return True when this entity's canonical register is read by the
+        active register-map variant."""
+        return (reg_type, address) in self._read_addresses()
 
     # ══════════════════════════════════════════════════════════════════════
     # TCP: Raw socket with tablet-synchronized bus-sharing
@@ -582,7 +729,8 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             }
 
             # Track pending reads: index → attempt count
-            pending: dict[int, int] = {i: 0 for i in range(len(_TCP_READ_GROUPS))}
+            groups = self._read_groups()
+            pending: dict[int, int] = {i: 0 for i in range(len(groups))}
             results: dict[int, list[int]] = {}
             max_cycles = _MAX_READ_RETRIES * 2  # Safety limit
             # Jittered backoff applied between retry cycles so sustained
@@ -629,7 +777,7 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if self._write_pending > 0:
                         _LOGGER.debug("Write pending mid-cycle — stopping reads early")
                         break
-                    fc, start, count = _TCP_READ_GROUPS[idx]
+                    fc, start, count, remap = groups[idx]
                     pending[idx] += 1
 
                     values = await self._tcp_send_one_read(fc, start, count)
@@ -663,8 +811,8 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # Process all successful results
             for idx, values in results.items():
-                _fc, start, _count = _TCP_READ_GROUPS[idx]
-                self._process_registers(data, start, values)
+                _fc, start, _count, remap = groups[idx]
+                self._decode_read(data, start, values, remap)
 
             if pending:
                 _LOGGER.debug(
@@ -727,9 +875,15 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
         return self._serial_client
 
-    def _read_all_registers_serial(self) -> dict[str, Any]:
-        """Read all registers via serial (standard pymodbus)."""
-        client = self._get_serial_client()
+    def _read_all_registers_variant(self, client: Any) -> dict[str, Any]:
+        """Read all registers via a pymodbus client (serial or ESP32 TCP).
+
+        Iterates the variant read groups and routes each by function code:
+        FC03 → read_holding_registers, FC04 → read_input_registers. The
+        "newntide" variant interleaves FC03/FC04 (run flags 912-913 read via
+        FC04 but stored as holding), so the old split-by-type loops can't
+        express it — a single FC-dispatching pass does. Decoding uses remap.
+        """
         data: dict[str, Any] = {
             "holding": {},
             "input": {},
@@ -737,31 +891,36 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "discrete": {},
         }
 
-        for start_addr, count in _HOLDING_READ_GROUPS:
+        for fc, start_addr, count, remap in self._read_groups():
             try:
-                result = client.read_holding_registers(
-                    start_addr, count=count, device_id=self._slave_id,
-                )
-                if result.isError():
-                    _LOGGER.debug("Error reading HR[%d..%d]: %s", start_addr, start_addr + count - 1, result)
+                if fc == 3:
+                    result = client.read_holding_registers(
+                        start_addr, count=count, device_id=self._slave_id,
+                    )
+                elif fc == 4:
+                    result = client.read_input_registers(
+                        start_addr, count=count, device_id=self._slave_id,
+                    )
+                else:
                     continue
-                self._process_registers(data, start_addr, result.registers)
-            except ModbusException as err:
-                _LOGGER.debug("Modbus error HR[%d..%d]: %s", start_addr, start_addr + count - 1, err)
-
-        for start_addr, count in _INPUT_READ_GROUPS:
-            try:
-                result = client.read_input_registers(
-                    start_addr, count=count, device_id=self._slave_id,
-                )
                 if result.isError():
-                    _LOGGER.debug("Error reading IR[%d..%d]: %s", start_addr, start_addr + count - 1, result)
+                    _LOGGER.debug(
+                        "Error reading FC%d [%d..%d]: %s",
+                        fc, start_addr, start_addr + count - 1, result,
+                    )
                     continue
-                self._process_registers(data, start_addr, result.registers)
+                self._decode_read(data, start_addr, result.registers, remap)
             except ModbusException as err:
-                _LOGGER.debug("Modbus error IR[%d..%d]: %s", start_addr, start_addr + count - 1, err)
+                _LOGGER.debug(
+                    "Modbus error FC%d [%d..%d]: %s",
+                    fc, start_addr, start_addr + count - 1, err,
+                )
 
         return data
+
+    def _read_all_registers_serial(self) -> dict[str, Any]:
+        """Read all registers via serial (standard pymodbus)."""
+        return self._read_all_registers_variant(self._get_serial_client())
 
     def _reset_serial_client(self) -> None:
         """Force-close the serial client."""
@@ -1042,6 +1201,19 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     pruned += len(ids)
                     if len(ids) < 200:
                         break
+        except sqlite3.OperationalError as err:
+            # A network share mounted read-only (or a read-only db file) makes
+            # SQLite refuse writes. Treat that as "nothing consolidated this
+            # cycle" rather than a warning: the snap_*.json files are left in
+            # place and consolidation retries on the next tick.
+            if "readonly" in str(err).lower():
+                _LOGGER.debug(
+                    "Snapshot database %s is read-only (network share); "
+                    "skipping consolidation this cycle",
+                    db_path,
+                )
+                return (merged, readings, pruned)
+            raise
         finally:
             conn.close()
         return (merged, readings, pruned)

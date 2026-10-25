@@ -13,6 +13,12 @@ CONF_HOST = "host"
 CONF_TCP_PORT = "tcp_port"
 CONF_SLAVE_ID = "slave_id"
 CONF_CONNECTION_TYPE = "connection_type"
+# Register-map variant (issue #5): which physical hardware's address layout the
+# Modbus reads should follow. "batavia" (default) keeps the module 0# system map
+# used by every unit that already reads correctly; "newntide" remaps the five
+# failing low-address groups to the Newntide R290 monobloc's documented FC04
+# addresses. Selectable in the options flow; defaults to the safe base map.
+CONF_REGISTER_MAP = "register_map"
 CONF_SERIAL_PORT = "serial_port"
 CONF_BAUDRATE = "baudrate"
 CONF_ENERGY_ENTITY = "energy_entity"
@@ -26,6 +32,24 @@ CONNECTION_TCP = "tcp"          # DR164 RS485-WiFi gateway (tablet bus-sharing)
 CONNECTION_SERIAL = "serial"    # Direct USB/RS485 dongle
 CONNECTION_ESP32 = "esp32"      # ESP32-S3 Modbus-TCP proxy (own bus, no tablet)
 CONNECTION_CLOUD = "cloud"      # EcoHome cloud API (primary), optional Modbus backup
+
+# UI connection-mode selector values (initial setup + options flow). Distinct
+# from the raw transport types above: "both" means cloud primary + a Modbus
+# connection active at the same time (cloud sensors keep preference), "cloud"
+# is cloud-only, "modbus" is a single Modbus transport. The coordinator already
+# treats cloud + Modbus-enabled as "both", so these only shape the config UI.
+CONNECTION_MODE_CLOUD = "cloud"
+CONNECTION_MODE_MODBUS = "modbus"
+CONNECTION_MODE_BOTH = "both"
+
+# === Register-map variants ===
+# Which physical hardware's Modbus address layout reads should follow. The
+# base "batavia" map (module 0# addresses) works for every unit that already
+# reads correctly; "newntide" remaps the five low-address groups that fail on
+# the Newntide R290 monobloc to the doc's corrected FC04 addresses. Selectable
+# in the options flow; defaults to the safe base map.
+REGISTER_MAP_BATAVIA = "batavia"      # module 0# system map (default)
+REGISTER_MAP_NEWNTIDE = "newntide"    # Newntide R290 monobloc corrected map
 
 # === Cloud connection config keys ===
 CONF_CLOUD_USERNAME = "cloud_username"
@@ -1135,6 +1159,7 @@ CLOUD_REGISTERS: dict[int, dict] = {
         "scale": 1,
         "entity_type": "select",
         "cloud_unique": True,
+        "options": {0: "off", 1: "on"},
         "icon": "mdi:led-strip-variant",
     },
 }

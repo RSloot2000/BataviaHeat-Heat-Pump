@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Mapping
 
 import voluptuous as vol
 
@@ -29,6 +29,7 @@ from .const import (
     CONF_CLOUD_USERNAME,
     CONF_CONNECTION_TYPE,
     CONF_ENERGY_ENTITY,
+    CONF_REGISTER_MAP,
     CONF_ENERGY_ENTITY_MODULE_0,
     CONF_ENERGY_ENTITY_MODULE_1,
     CONF_HOST,
@@ -41,7 +42,12 @@ from .const import (
     CONF_SLAVE_ID,
     CONF_TCP_PORT,
     CONNECTION_CLOUD,
+    CONNECTION_MODE_BOTH,
+    CONNECTION_MODE_CLOUD,
+    CONNECTION_MODE_MODBUS,
     CONNECTION_ESP32,
+    REGISTER_MAP_BATAVIA,
+    REGISTER_MAP_NEWNTIDE,
     CONNECTION_SERIAL,
     CONNECTION_TCP,
     DEFAULT_BAUDRATE,
@@ -113,6 +119,9 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
         self._entry_data: dict[str, Any] = {}
         self._entry_title: str = ""
         self._cloud_devices: list[dict[str, Any]] = []
+        # When the user picked the "Both (Cloud + Modbus)" option, skip the
+        # "add Modbus?" confirm prompt and go straight to Modbus transport setup.
+        self._want_modbus: bool = False
 
     @staticmethod
     @callback
@@ -125,8 +134,16 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
         """Step 1: Choose primary connection type."""
         if user_input is not None:
             chosen = user_input[CONF_CONNECTION_TYPE]
+            if chosen == CONNECTION_MODE_BOTH:
+                # Both (Cloud + Modbus): cloud is primary and preferred, Modbus
+                # runs alongside. Reuse the cloud flow, but skip the "add Modbus?"
+                # confirm since the user explicitly chose both.
+                self._connection_type = CONNECTION_CLOUD
+                self._want_modbus = True
+                return await self.async_step_cloud_login()
             if chosen == CONNECTION_CLOUD:
                 self._connection_type = CONNECTION_CLOUD
+                self._want_modbus = False
                 return await self.async_step_cloud_login()
             self._connection_type = chosen
             if chosen == CONNECTION_SERIAL:
@@ -140,6 +157,7 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_CONNECTION_TYPE, default=CONNECTION_TCP): SelectSelector(
                     SelectSelectorConfig(
                         options=[
+                            SelectOptionDict(value=CONNECTION_MODE_BOTH, label="Both (Cloud + Modbus)"),
                             SelectOptionDict(value=CONNECTION_CLOUD, label="Cloud (EcoHome app account)"),
                             SelectOptionDict(value=CONNECTION_TCP, label="DR164 gateway (Modbus TCP)"),
                             SelectOptionDict(value=CONNECTION_ESP32, label="ESP32 proxy (Modbus TCP)"),
@@ -231,7 +249,7 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Offer to add a local Modbus connection as backup / extension."""
         if user_input is not None:
-            if user_input.get("add_modbus", False):
+            if self._want_modbus or user_input.get("add_modbus", False):
                 return await self.async_step_modbus_type()
             device_name = self._entry_data.get(CONF_CLOUD_DEVICE_NAME, "BataviaHeat")
             self._entry_title = f"BataviaHeat ({device_name})"
@@ -453,46 +471,289 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
             dir_options=dir_options,
             energy_entity_module_0="",
             energy_entity_module_1="",
+            register_map=REGISTER_MAP_BATAVIA,
         )
         return self.async_show_form(step_id="advanced", data_schema=schema)
 
 
 class BataviaHeatOptionsFlow(OptionsFlow):
-    """Handle options flow for BataviaHeat R290."""
+    """Handle options flow for BataviaHeat R290.
+
+    Lets a configured entry switch between Cloud-only, Modbus-only, and
+    Both (Cloud + Modbus, cloud sensors preferred). Connection settings are
+    written back to ``entry.data`` (the coordinator reads them); advanced
+    settings (energy meter, offload, register map) go to ``entry.options``.
+    """
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         self._config_entry = config_entry
+        # Pending state carried across the multi-step flow (cloud login is only
+        # needed when a Modbus-only entry adds cloud credentials).
+        self._mode: str = _current_mode(config_entry)
+        self._modbus_type: str = CONNECTION_TCP
+        self._modbus_details: dict[str, Any] = {}
+        self._advanced_options: dict[str, Any] = {}
+        self._cloud_creds: dict[str, Any] = {}
+        self._cloud_devices: list[dict[str, Any]] = []
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """Step 1: choose the connection mode (Cloud / Modbus / Both)."""
         entry = self._config_entry
-        modbus_type = _effective_modbus_type(entry)
+        self._mode = _current_mode(entry)
 
         if user_input is not None:
-            return self.async_create_entry(
-                data=_normalize_advanced_options(user_input, modbus_type)
+            self._mode = user_input.get(CONF_CONNECTION_TYPE, self._mode)
+            # Cloud modes need credentials. A Modbus-only entry has none, so run
+            # a one-time login before collecting Modbus details; an existing
+            # cloud entry skips straight to the details step.
+            if self._mode in (CONNECTION_MODE_CLOUD, CONNECTION_MODE_BOTH) and not self._has_cloud_creds(entry):
+                return await self.async_step_cloud_login()
+            return await self.async_step_details()
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_CONNECTION_TYPE, default=self._mode): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            SelectOptionDict(
+                                value=CONNECTION_MODE_CLOUD, label="Cloud (EcoHome)"
+                            ),
+                            SelectOptionDict(
+                                value=CONNECTION_MODE_MODBUS, label="Modbus only"
+                            ),
+                            SelectOptionDict(
+                                value=CONNECTION_MODE_BOTH, label="Both (Cloud + Modbus)"
+                            ),
+                        ]
+                    )
+                ),
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=data_schema)
+
+    async def async_step_details(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Step 2: Modbus transport/details (when needed) + advanced settings."""
+        entry = self._config_entry
+
+        if user_input is not None:
+            self._modbus_type = user_input.get(
+                CONF_MODBUS_CONNECTION_TYPE, CONNECTION_TCP
             )
+            self._modbus_details = {
+                CONF_HOST: user_input.get(CONF_HOST, ""),
+                CONF_TCP_PORT: user_input.get(CONF_TCP_PORT, DEFAULT_TCP_PORT),
+                CONF_SLAVE_ID: user_input.get(CONF_SLAVE_ID, DEFAULT_SLAVE_ID),
+                CONF_SERIAL_PORT: user_input.get(CONF_SERIAL_PORT, ""),
+                CONF_BAUDRATE: user_input.get(CONF_BAUDRATE, DEFAULT_BAUDRATE),
+            }
+            self._advanced_options = _normalize_advanced_options(user_input)
+            return await self._finalize(entry)
 
         dir_options = await self.hass.async_add_executor_job(_discover_offload_dirs)
-        schema = _build_advanced_schema(
+        schema = _build_options_schema(
             entry=entry,
-            modbus_type=modbus_type,
+            mode=self._mode,
+            dir_options=dir_options,
             energy_entity=entry.options.get(CONF_ENERGY_ENTITY, ""),
             offload_enabled=entry.options.get(CONF_OFFLOAD_ENABLED, False),
             offload_url=entry.options.get(CONF_OFFLOAD_URL, ""),
             offload_db_max_mb=entry.options.get(
                 CONF_OFFLOAD_DB_MAX_MB, DEFAULT_OFFLOAD_DB_MAX_MB
             ),
-            dir_options=dir_options,
             energy_entity_module_0=entry.options.get(
                 CONF_ENERGY_ENTITY_MODULE_0, ""
             ),
             energy_entity_module_1=entry.options.get(
                 CONF_ENERGY_ENTITY_MODULE_1, ""
             ),
+            register_map=entry.options.get(
+                CONF_REGISTER_MAP, REGISTER_MAP_BATAVIA
+            ),
         )
-        return self.async_show_form(step_id="init", data_schema=schema)
+        return self.async_show_form(step_id="details", data_schema=schema)
+
+    async def async_step_cloud_login(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """One-time cloud login when a Modbus-only entry adds the cloud path."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            username: str = user_input["username"].strip()
+            password_hash = BataviaCloudGateway.hash_password(user_input["password"])
+            gateway = BataviaCloudGateway(self.hass, username, password_hash)
+            try:
+                await gateway.authenticate()
+                devices = await gateway.fetch_devices()
+            except CloudAuthError:
+                errors["base"] = "invalid_auth"
+            except Exception:
+                _LOGGER.exception("Cloud login failed")
+                errors["base"] = "cannot_connect"
+            else:
+                if not devices:
+                    errors["base"] = "no_devices"
+                elif len(devices) == 1:
+                    dev = devices[0]
+                    self._cloud_creds.update({
+                        CONF_CLOUD_USERNAME: username,
+                        CONF_CLOUD_PASSWORD_HASH: password_hash,
+                        CONF_CLOUD_DEVICE_CODE: dev["device_code"],
+                        CONF_CLOUD_DEVICE_NAME: (
+                            dev.get("device_nick_name") or dev.get("device_name") or dev["device_code"]
+                        ),
+                    })
+                    return await self._finalize(self._config_entry)
+                self._cloud_devices = devices
+                return await self.async_step_cloud_device()
+
+        data_schema = vol.Schema(
+            {
+                vol.Required("username"): str,
+                vol.Required("password"): str,
+            }
+        )
+        return self.async_show_form(
+            step_id="cloud_login", data_schema=data_schema, errors=errors
+        )
+
+    async def async_step_cloud_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Pick one device when multiple are present on the account."""
+        if user_input is not None:
+            code = user_input["device_code"]
+            name = next(
+                (
+                    d.get("device_nick_name") or d.get("device_name") or code
+                    for d in self._cloud_devices
+                    if d["device_code"] == code
+                ),
+                code,
+            )
+            self._cloud_creds.update({
+                CONF_CLOUD_DEVICE_CODE: code,
+                CONF_CLOUD_DEVICE_NAME: name,
+            })
+            return await self._finalize(self._config_entry)
+
+        options = [
+            SelectOptionDict(
+                value=d["device_code"],
+                label=d.get("device_nick_name") or d.get("device_name") or d["device_code"],
+            )
+            for d in self._cloud_devices
+        ]
+        data_schema = vol.Schema(
+            {vol.Required("device_code"): SelectSelector(SelectSelectorConfig(options=options))}
+        )
+        return self.async_show_form(step_id="cloud_device", data_schema=data_schema)
+
+    def _has_cloud_creds(self, entry: ConfigEntry) -> bool:
+        """Return True when the entry already holds usable cloud credentials."""
+        return all(
+            entry.data.get(k)
+            for k in (CONF_CLOUD_USERNAME, CONF_CLOUD_PASSWORD_HASH, CONF_CLOUD_DEVICE_CODE)
+        )
+
+    async def _finalize(self, entry: ConfigEntry) -> ConfigFlowResult:
+        """Persist new connection settings to entry.data, advanced to entry.options."""
+        mode = self._mode
+        if mode == CONNECTION_MODE_CLOUD:
+            new_data = _to_cloud(entry.data)
+        elif mode == CONNECTION_MODE_MODBUS:
+            new_data = _to_modbus(entry.data, self._modbus_type, self._modbus_details)
+        else:
+            new_data = _to_both(entry.data, self._modbus_type, self._modbus_details)
+        # Merge freshly-entered cloud credentials from the login step, if any.
+        new_data.update(self._cloud_creds)
+
+        try:
+            await self.hass.config_entries.async_update_entry(entry, data=new_data)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Failed to update entry connection settings: %s", err)
+
+        return self.async_create_entry(data=self._advanced_options)
+
+
+# ── Connection-mode helpers ──────────────────────────────────────────────────
+# An entry's *mode* is cloud / modbus / both. "both" is stored as cloud primary
+# (connection_type=cloud) with modbus_enabled=True; the coordinator already runs
+# both and prefers cloud sensors, so these helpers only reshape entry.data.
+
+
+def _current_mode(entry: ConfigEntry) -> str:
+    """Return the entry's connection mode: cloud / modbus / both."""
+    ctype = entry.data.get(CONF_CONNECTION_TYPE, CONNECTION_TCP)
+    if ctype == CONNECTION_CLOUD:
+        return (
+            CONNECTION_MODE_BOTH
+            if entry.data.get(CONF_MODBUS_ENABLED, False)
+            else CONNECTION_MODE_CLOUD
+        )
+    return CONNECTION_MODE_MODBUS
+
+
+_MODBUS_DETAIL_KEYS = (
+    CONF_HOST,
+    CONF_TCP_PORT,
+    CONF_SLAVE_ID,
+    CONF_SERIAL_PORT,
+    CONF_BAUDRATE,
+)
+
+
+def _strip_modbus_fields(data: dict[str, Any]) -> None:
+    """Drop Modbus transport details from a data dict."""
+    for key in _MODBUS_DETAIL_KEYS:
+        data.pop(key, None)
+
+
+def _apply_modbus_details(
+    data: dict[str, Any], modbus_type: str, details: Mapping[str, Any]
+) -> None:
+    """Store the Modbus transport + its connection details in a data dict."""
+    data[CONF_MODBUS_CONNECTION_TYPE] = modbus_type
+    for key in _MODBUS_DETAIL_KEYS:
+        if key in details:
+            data[key] = details[key]
+
+
+def _to_cloud(base: Mapping[str, Any]) -> dict[str, Any]:
+    """Return cloud-only connection data (Modbus disabled)."""
+    data = dict(base)
+    data[CONF_CONNECTION_TYPE] = CONNECTION_CLOUD
+    data[CONF_MODBUS_ENABLED] = False
+    _strip_modbus_fields(data)
+    return data
+
+
+def _to_modbus(
+    base: Mapping[str, Any], modbus_type: str, details: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Return Modbus-only connection data (cloud removed)."""
+    data = dict(base)
+    data[CONF_CONNECTION_TYPE] = modbus_type
+    data[CONF_MODBUS_ENABLED] = False
+    for key in (CONF_CLOUD_USERNAME, CONF_CLOUD_PASSWORD_HASH, CONF_CLOUD_DEVICE_CODE, CONF_CLOUD_DEVICE_NAME):
+        data.pop(key, None)
+    _apply_modbus_details(data, modbus_type, details)
+    return data
+
+
+def _to_both(
+    base: Mapping[str, Any], modbus_type: str, details: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Return cloud + Modbus connection data (cloud preferred)."""
+    data = dict(base)
+    data[CONF_CONNECTION_TYPE] = CONNECTION_CLOUD
+    data[CONF_MODBUS_ENABLED] = True
+    _apply_modbus_details(data, modbus_type, details)
+    return data
 
 
 def _effective_modbus_type(entry: ConfigEntry) -> str | None:
@@ -523,13 +784,60 @@ def _build_advanced_schema(
     modbus_type: str | None = None,
     energy_entity_module_0: str = "",
     energy_entity_module_1: str = "",
+    register_map: str = REGISTER_MAP_BATAVIA,
 ) -> vol.Schema:
-    if offload_url and offload_url not in dir_options:
-        dir_options.append(offload_url)
-
     fields: dict[Any, Any] = {}
+    _add_register_map(fields, entry, register_map)
+    if modbus_type is not None:
+        _add_modbus_detail_fields(fields, entry, modbus_type)
+    _add_advanced_fields(
+        fields,
+        energy_entity,
+        offload_enabled,
+        offload_url,
+        offload_db_max_mb,
+        dir_options,
+        energy_entity_module_0,
+        energy_entity_module_1,
+    )
+    return vol.Schema(fields)
 
-    # ── Editable Modbus connection details (IP can change over time) ──────────
+
+def _add_register_map(
+    fields: dict[Any, Any], entry: ConfigEntry | None, register_map: str
+) -> None:
+    """Add the register-map selection field.
+
+    Tells the coordinator which hardware's Modbus address layout to read.
+    "batavia" (module 0# system map) for standard units; "newntide" remaps the
+    five low-address groups that fail on the Newntide R290 monobloc.
+    """
+    fields[
+        vol.Optional(
+            CONF_REGISTER_MAP,
+            default=_current(entry, CONF_REGISTER_MAP, register_map),
+        )
+    ] = SelectSelector(
+        SelectSelectorConfig(
+            options=[
+                SelectOptionDict(
+                    value=REGISTER_MAP_BATAVIA,
+                    label="BataviaHeat (module 0# system map)",
+                ),
+                SelectOptionDict(
+                    value=REGISTER_MAP_NEWNTIDE,
+                    label="Newntide R290 (corrected FC04 map)",
+                ),
+            ],
+            mode=SelectSelectorMode.DROPDOWN,
+        )
+    )
+
+
+def _add_modbus_detail_fields(
+    fields: dict[Any, Any], entry: ConfigEntry | None, modbus_type: str
+) -> None:
+    """Add the editable Modbus transport details (host/port or serial/baud)."""
     if modbus_type in (CONNECTION_TCP, CONNECTION_ESP32):
         fields[
             vol.Optional(
@@ -569,7 +877,21 @@ def _build_advanced_schema(
             )
         ] = vol.All(vol.Coerce(int), vol.Range(min=0, max=247))
 
-    # ── COP + register offload options ───────────────────────────────────────
+
+def _add_advanced_fields(
+    fields: dict[Any, Any],
+    energy_entity: str,
+    offload_enabled: bool,
+    offload_url: str,
+    offload_db_max_mb: float,
+    dir_options: list[str],
+    energy_entity_module_0: str,
+    energy_entity_module_1: str,
+) -> None:
+    """Add per-unit energy meters + register offload fields."""
+    if offload_url and offload_url not in dir_options:
+        dir_options.append(offload_url)
+
     # Per-cascade-unit energy meters. A two-unit cascade has two electrical
     # draws, so assigning a meter per unit lets each unit's COP/EER be computed
     # against its own power (true per-device efficiency).
@@ -615,6 +937,82 @@ def _build_advanced_schema(
             ),
         }
     )
+
+
+def _build_options_schema(
+    entry: ConfigEntry,
+    mode: str,
+    dir_options: list[str],
+    energy_entity: str,
+    offload_enabled: bool,
+    offload_url: str,
+    offload_db_max_mb: float,
+    energy_entity_module_0: str,
+    energy_entity_module_1: str,
+    register_map: str,
+) -> vol.Schema:
+    """Build the options-flow schema: connection mode + Modbus details + advanced.
+
+    The connection-mode selector (Cloud / Modbus / Both) is the new control;
+    Modbus transport + details are shown when the mode is Modbus-only or Both.
+    """
+    fields: dict[Any, Any] = {}
+
+    # ── Connection mode selector ────────────────────────────────────────────
+    # "Both" keeps cloud primary (cloud sensors win) and adds a live Modbus
+    # connection; the coordinator already runs both and prefers cloud sensors.
+    fields[
+        vol.Required(CONF_CONNECTION_TYPE, default=mode)
+    ] = SelectSelector(
+        SelectSelectorConfig(
+            options=[
+                SelectOptionDict(
+                    value=CONNECTION_MODE_CLOUD, label="Cloud (EcoHome)"
+                ),
+                SelectOptionDict(
+                    value=CONNECTION_MODE_MODBUS, label="Modbus only"
+                ),
+                SelectOptionDict(
+                    value=CONNECTION_MODE_BOTH, label="Both (Cloud + Modbus)"
+                ),
+            ]
+        )
+    )
+
+    # ── Editable Modbus transport + details (IP/baud can change over time) ─────
+    if mode in (CONNECTION_MODE_MODBUS, CONNECTION_MODE_BOTH):
+        modbus_type = _effective_modbus_type(entry) or CONNECTION_TCP
+        fields[
+            vol.Required(CONF_MODBUS_CONNECTION_TYPE, default=modbus_type)
+        ] = SelectSelector(
+            SelectSelectorConfig(
+                options=[
+                    SelectOptionDict(
+                        value=CONNECTION_TCP, label="DR164 gateway (Modbus TCP)"
+                    ),
+                    SelectOptionDict(
+                        value=CONNECTION_ESP32, label="ESP32 proxy (Modbus TCP)"
+                    ),
+                    SelectOptionDict(
+                        value=CONNECTION_SERIAL, label="Modbus RTU (Serial)"
+                    ),
+                ]
+            )
+        )
+        _add_modbus_detail_fields(fields, entry, modbus_type)
+
+    # ── Register map + energy meter + offload ─────────────────────────────────
+    _add_register_map(fields, entry, register_map)
+    _add_advanced_fields(
+        fields,
+        energy_entity,
+        offload_enabled,
+        offload_url,
+        offload_db_max_mb,
+        dir_options,
+        energy_entity_module_0,
+        energy_entity_module_1,
+    )
     return vol.Schema(fields)
 
 
@@ -622,13 +1020,31 @@ def _normalize_advanced_options(
     user_input: dict[str, Any], modbus_type: str | None = None
 ) -> dict[str, Any]:
     options = dict(user_input)
+    # Connection-mode inputs live in entry.data, not options — drop them so
+    # entry.options holds only the genuinely-advanced settings.
+    for key in _CONNECTION_INPUT_KEYS:
+        options.pop(key, None)
     options.setdefault(CONF_ENERGY_ENTITY, "")
     options.setdefault(CONF_ENERGY_ENTITY_MODULE_0, "")
+    options.setdefault(CONF_REGISTER_MAP, REGISTER_MAP_BATAVIA)
     options.setdefault(CONF_ENERGY_ENTITY_MODULE_1, "")
     options.setdefault(CONF_OFFLOAD_URL, "")
     options.setdefault(CONF_OFFLOAD_ENABLED, False)
     options.setdefault(CONF_OFFLOAD_DB_MAX_MB, DEFAULT_OFFLOAD_DB_MAX_MB)
     return options
+
+
+# Form keys that describe the connection itself (stored in entry.data, not
+# entry.options). Kept in one place so _normalize_advanced_options strips them.
+_CONNECTION_INPUT_KEYS = (
+    CONF_CONNECTION_TYPE,
+    CONF_MODBUS_CONNECTION_TYPE,
+    CONF_HOST,
+    CONF_TCP_PORT,
+    CONF_SLAVE_ID,
+    CONF_SERIAL_PORT,
+    CONF_BAUDRATE,
+)
 
 
 def _discover_offload_dirs() -> list[str]:
