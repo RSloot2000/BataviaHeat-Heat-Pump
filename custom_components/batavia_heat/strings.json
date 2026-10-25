@@ -68,10 +68,18 @@
         "title": "Advanced Options (optional)",
         "description": "Optional features. Leave every field empty to skip them \u2014 you can always change these later via the integration's Configure button. Select an electricity meter to enable COP sensors, and/or enable register offload to store raw registers for later decoding.",
         "data": {
+          "register_map": "Device manufacturer",
           "energy_entity": "Electricity meter (kWh)",
           "offload_enabled": "Enable register offload",
           "offload_url": "Offload URL or local path (e.g. http://nas:8099/ or /share/snooper, leave empty to disable)",
           "offload_db_max_mb": "Max snapshots.db size in MB (0 = unlimited; oldest entries are pruned when exceeded)"
+        }
+      },
+      "units": {
+        "title": "Number of Outdoor Units",
+        "description": "How many outdoor units does this installation have? A single unit needs one system electricity meter; a two-unit cascade can assign a meter per unit.",
+        "data": {
+          "num_outdoor_units": "Number of outdoor units"
         }
       }
     },
@@ -89,17 +97,44 @@
     "step": {
       "init": {
         "title": "BataviaHeat R290 Options",
-        "description": "Update the Modbus connection details (e.g. a changed ESP32/DR164 IP address), select your electricity meter to enable COP sensors, and configure register offload.",
+        "description": "Choose what to change: edit the current connection settings, or add the transport that is missing (cloud or Modbus).",
         "data": {
+          "init_action": "What do you want to do?"
+        }
+      },
+      "details": {
+        "title": "Connection settings",
+        "description": "Edit the Modbus connection type and details, the number of outdoor units, the electricity meter for COP sensors, and register offload options.",
+        "data": {
+          "num_outdoor_units": "Number of outdoor units",
+          "modbus_connection_type": "Modbus connection type",
           "host": "Host / IP address",
           "tcp_port": "TCP port",
-          "slave_id": "Slave ID",
-          "serial_port": "Serial port",
-          "baudrate": "Baudrate",
+          "slave_id": "Modbus slave ID",
+          "serial_port": "Serial port (e.g. /dev/ttyUSB0 or COM3)",
+          "baudrate": "Baudrate (default: 9600)",
+          "register_map": "Device manufacturer",
           "energy_entity": "Electricity meter (kWh)",
+          "energy_entity_module_0": "Electricity meter (module 0#)",
+          "energy_entity_module_1": "Electricity meter (module 1#)",
           "offload_enabled": "Enable register offload",
           "offload_url": "Offload URL or local path (e.g. http://nas:8099/ or /share/snooper, leave empty to disable)",
           "offload_db_max_mb": "Max snapshots.db size in MB (0 = unlimited; oldest entries are pruned when exceeded)"
+        }
+      },
+      "cloud_login": {
+        "title": "EcoHome Cloud Login",
+        "description": "Enter the username and password you use for the EcoHome app. Your password is stored as an MD5 hash — never in plaintext.",
+        "data": {
+          "username": "Email address / username",
+          "password": "Password"
+        }
+      },
+      "cloud_device": {
+        "title": "Select Device",
+        "description": "Multiple heat pumps were found on your account. Select the one to control.",
+        "data": {
+          "device_code": "Device"
         }
       }
     }

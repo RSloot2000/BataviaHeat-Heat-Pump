@@ -68,10 +68,18 @@
         "title": "Geavanceerde opties (optioneel)",
         "description": "Optionele functies. Laat elk veld leeg om ze over te slaan — je kunt dit later altijd wijzigen via de knop Configureren. Selecteer een kWh-meter om COP-sensoren in te schakelen, en/of schakel register-offload in om ruwe registers op te slaan voor latere analyse.",
         "data": {
+          "register_map": "Fabrikant",
           "energy_entity": "Elektriciteitsmeter (kWh)",
           "offload_enabled": "Register-offload inschakelen",
           "offload_url": "Offload-URL of lokaal pad (bijv. http://nas:8099/ of /share/snooper, leeg = uit)",
           "offload_db_max_mb": "Max. grootte snapshots.db in MB (0 = onbeperkt; oudste items worden verwijderd bij overschrijding)"
+        }
+      },
+      "units": {
+        "title": "Aantal outside units",
+        "description": "Hoe veel outside units heeft deze installatie? Een single unit heeft één systemeter nodig; een cascade van twee units kan per unit een meter toewezen.",
+        "data": {
+          "num_outdoor_units": "Aantal outside units"
         }
       }
     },
@@ -89,17 +97,44 @@
     "step": {
       "init": {
         "title": "BataviaHeat R290 opties",
-        "description": "Werk de Modbus-verbindingsgegevens bij (bijv. een gewijzigd ESP32/DR164 IP-adres), selecteer je kWh-meter voor COP-sensoren en configureer register-offload.",
+        "description": "Kies wat wil wijzigen: de huidige verbindingsgegevens bewerken, of de ontbrekende verbinding (cloud of Modbus) toevoegen.",
         "data": {
+          "init_action": "Wat wil je doen?"
+        }
+      },
+      "details": {
+        "title": "Verbindingsgegevens",
+        "description": "Bewerk de Modbus-verbindingstype en -gegevens, het aantal buitenunits, de kWh-meter voor COP-sensoren en register-offload opties.",
+        "data": {
+          "num_outdoor_units": "Aantal outside units",
+          "modbus_connection_type": "Modbus-verbindingstype",
           "host": "Host / IP-adres",
           "tcp_port": "TCP-poort",
-          "slave_id": "Slave-ID",
-          "serial_port": "Seriële poort",
-          "baudrate": "Baudrate",
+          "slave_id": "Modbus slave-ID",
+          "serial_port": "Seriële poort (bijv. /dev/ttyUSB0 of COM3)",
+          "baudrate": "Baudrate (standaard: 9600)",
+          "register_map": "Fabrikant",
           "energy_entity": "Elektriciteitsmeter (kWh)",
+          "energy_entity_module_0": "Elektriciteitsmeter (module 0#)",
+          "energy_entity_module_1": "Elektriciteitsmeter (module 1#)",
           "offload_enabled": "Register-offload inschakelen",
           "offload_url": "Offload-URL of lokaal pad (bijv. http://nas:8099/ of /share/snooper, leeg = uit)",
           "offload_db_max_mb": "Max. grootte snapshots.db in MB (0 = onbeperkt; oudste items worden verwijderd bij overschrijding)"
+        }
+      },
+      "cloud_login": {
+        "title": "EcoHome cloud-login",
+        "description": "Voer de gebruikersnaam en het wachtwoord in die je voor de EcoHome-app gebruikt. Je wachtwoord wordt opgeslagen als MD5-hash — nooit als platte tekst.",
+        "data": {
+          "username": "E-mailadres / gebruikersnaam",
+          "password": "Wachtwoord"
+        }
+      },
+      "cloud_device": {
+        "title": "Apparaat selecteren",
+        "description": "Er zijn meerdere warmtepompen op je account gevonden. Selecteer degene die je wilt bedienen.",
+        "data": {
+          "device_code": "Apparaat"
         }
       }
     }

@@ -22,6 +22,11 @@ CONF_REGISTER_MAP = "register_map"
 CONF_SERIAL_PORT = "serial_port"
 CONF_BAUDRATE = "baudrate"
 CONF_ENERGY_ENTITY = "energy_entity"
+# How many outdoor units this entry covers. A single unit (1) needs one energy
+# meter; a two-unit cascade (2) can assign a meter per unit, or share one.
+CONF_NUM_OUTDOOR_UNITS = "num_outdoor_units"
+NUM_OUTDOOR_UNITS_SINGLE = "1"
+NUM_OUTDOOR_UNITS_CASCADE = "2"
 # Per-cascade-unit energy meters, used for per-device COP/EER. A cascade's
 # second unit (module 1#) has its own electrical draw, so its efficiency can
 # only be computed against its own meter — not the system-wide one.

@@ -29,6 +29,7 @@ from .const import (
     CONF_CLOUD_USERNAME,
     CONF_CONNECTION_TYPE,
     CONF_ENERGY_ENTITY,
+    CONF_NUM_OUTDOOR_UNITS,
     CONF_REGISTER_MAP,
     CONF_ENERGY_ENTITY_MODULE_0,
     CONF_ENERGY_ENTITY_MODULE_1,
@@ -44,6 +45,8 @@ from .const import (
     CONNECTION_CLOUD,
     CONNECTION_MODE_BOTH,
     CONNECTION_MODE_CLOUD,
+    NUM_OUTDOOR_UNITS_SINGLE,
+    NUM_OUTDOOR_UNITS_CASCADE,
     CONNECTION_MODE_MODBUS,
     CONNECTION_ESP32,
     REGISTER_MAP_BATAVIA,
@@ -60,6 +63,19 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 _CONF_PENDING_MODBUS_TYPE = "_pending_modbus_type"
+
+# Options-flow "action" chosen on the init screen: edit the current setup, or
+# add the complementary transport (cloud / Modbus) to it.
+CONF_INIT_ACTION = "init_action"
+INIT_ACTION_EDIT = "edit"
+INIT_ACTION_ADD_CLOUD = "add_cloud"
+INIT_ACTION_ADD_MODBUS = "add_modbus"
+# Human-readable label for each connection mode, shown on the init screen.
+_MODE_LABELS = {
+    CONNECTION_MODE_CLOUD: "Cloud",
+    CONNECTION_MODE_MODBUS: "Modbus",
+    CONNECTION_MODE_BOTH: "Cloud + Modbus",
+}
 
 
 async def validate_tcp_connection(hass: HomeAssistant, data: dict[str, Any]) -> None:
@@ -119,6 +135,9 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
         self._entry_data: dict[str, Any] = {}
         self._entry_title: str = ""
         self._cloud_devices: list[dict[str, Any]] = []
+        # Number of outdoor units ("1" single / "2" cascade). None until the
+        # units step chooses, so the first advanced step can ask first.
+        self._num_outdoor_units: str | None = None
         # When the user picked the "Both (Cloud + Modbus)" option, skip the
         # "add Modbus?" confirm prompt and go straight to Modbus transport setup.
         self._want_modbus: bool = False
@@ -451,15 +470,52 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
         )
         return self.async_show_form(step_id="serial", data_schema=data_schema, errors=errors)
 
+    async def async_step_units(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Choose how many outdoor units: 1 single, or 2 (cascade)."""
+        if user_input is not None:
+            self._num_outdoor_units = user_input[CONF_NUM_OUTDOOR_UNITS]
+            return await self.async_step_advanced()
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_NUM_OUTDOOR_UNITS, default=NUM_OUTDOOR_UNITS_SINGLE):
+                    SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                SelectOptionDict(
+                                    value=NUM_OUTDOOR_UNITS_SINGLE,
+                                    label="1 outdoor unit",
+                                ),
+                                SelectOptionDict(
+                                    value=NUM_OUTDOOR_UNITS_CASCADE,
+                                    label="2 outdoor units (cascade)",
+                                ),
+                            ],
+                        )
+                    ),
+            }
+        )
+        return self.async_show_form(step_id="units", data_schema=data_schema)
+
     async def async_step_advanced(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Optional energy meter + register offload settings."""
+        # Branch: ask how many outdoor units before showing the meter fields, so
+        # a single unit never sees the redundant per-cascade meter fields.
+        if self._num_outdoor_units is None:
+            return await self.async_step_units(user_input)
+
         if user_input is not None:
             return self.async_create_entry(
                 title=self._entry_title,
                 data=self._entry_data,
-                options=_normalize_advanced_options(user_input),
+                options=_normalize_advanced_options(
+                    user_input,
+                    num_outdoor_units=self._num_outdoor_units,
+                ),
             )
 
         dir_options = await self.hass.async_add_executor_job(_discover_offload_dirs)
@@ -472,6 +528,7 @@ class BataviaHeatConfigFlow(ConfigFlow, domain=DOMAIN):
             energy_entity_module_0="",
             energy_entity_module_1="",
             register_map=REGISTER_MAP_BATAVIA,
+            num_outdoor_units=self._num_outdoor_units,
         )
         return self.async_show_form(step_id="advanced", data_schema=schema)
 
@@ -490,6 +547,11 @@ class BataviaHeatOptionsFlow(OptionsFlow):
         # Pending state carried across the multi-step flow (cloud login is only
         # needed when a Modbus-only entry adds cloud credentials).
         self._mode: str = _current_mode(config_entry)
+        # Number of outdoor units; default from the entry so editing an existing
+        # entry keeps its cascade/single setting. "1" = single, "2" = cascade.
+        self._num_outdoor_units: str = config_entry.options.get(
+            CONF_NUM_OUTDOOR_UNITS, NUM_OUTDOOR_UNITS_SINGLE
+        )
         self._modbus_type: str = CONNECTION_TCP
         self._modbus_details: dict[str, Any] = {}
         self._advanced_options: dict[str, Any] = {}
@@ -499,35 +561,61 @@ class BataviaHeatOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 1: choose the connection mode (Cloud / Modbus / Both)."""
+        """Step 1: choose what to do — edit the current setup or add a transport.
+
+        Lands on the entry's current configuration. A single action lets the user
+        add the complementary transport (cloud or Modbus) without re-classifying
+        the whole entry.
+        """
         entry = self._config_entry
         self._mode = _current_mode(entry)
 
         if user_input is not None:
-            self._mode = user_input.get(CONF_CONNECTION_TYPE, self._mode)
-            # Cloud modes need credentials. A Modbus-only entry has none, so run
-            # a one-time login before collecting Modbus details; an existing
-            # cloud entry skips straight to the details step.
-            if self._mode in (CONNECTION_MODE_CLOUD, CONNECTION_MODE_BOTH) and not self._has_cloud_creds(entry):
+            action = user_input[CONF_INIT_ACTION]
+            if action == INIT_ACTION_EDIT:
+                return await self.async_step_details()
+            if action == INIT_ACTION_ADD_CLOUD:
+                # Adding cloud to a Modbus-only entry → result is "both".
+                # Preserve the existing Modbus transport details so they are not
+                # dropped when the entry becomes cloud + Modbus.
+                self._modbus_type = _effective_modbus_type(entry) or CONNECTION_TCP
+                self._modbus_details = {
+                    k: entry.data.get(k) for k in _MODBUS_DETAIL_KEYS
+                }
                 return await self.async_step_cloud_login()
-            return await self.async_step_details()
+            if action == INIT_ACTION_ADD_MODBUS:
+                # Adding Modbus to a Cloud-only entry → result is "both"; the
+                # transport is chosen on the details screen.
+                self._mode = CONNECTION_MODE_BOTH
+                self._modbus_type = CONNECTION_TCP
+                self._modbus_details = {}
+                return await self.async_step_details()
+
+        actions = [
+            SelectOptionDict(
+                value=INIT_ACTION_EDIT,
+                label=f"Edit {_MODE_LABELS.get(self._mode, self._mode)} settings",
+            )
+        ]
+        # Only offer to add a transport when it is absent. "Both" already has
+        # both, so it only shows the edit action.
+        if self._mode == CONNECTION_MODE_MODBUS:
+            actions.append(
+                SelectOptionDict(
+                    value=INIT_ACTION_ADD_CLOUD, label="Add cloud connection"
+                )
+            )
+        if self._mode == CONNECTION_MODE_CLOUD:
+            actions.append(
+                SelectOptionDict(
+                    value=INIT_ACTION_ADD_MODBUS, label="Add Modbus connection"
+                )
+            )
 
         data_schema = vol.Schema(
             {
-                vol.Required(CONF_CONNECTION_TYPE, default=self._mode): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[
-                            SelectOptionDict(
-                                value=CONNECTION_MODE_CLOUD, label="Cloud (EcoHome)"
-                            ),
-                            SelectOptionDict(
-                                value=CONNECTION_MODE_MODBUS, label="Modbus only"
-                            ),
-                            SelectOptionDict(
-                                value=CONNECTION_MODE_BOTH, label="Both (Cloud + Modbus)"
-                            ),
-                        ]
-                    )
+                vol.Required(CONF_INIT_ACTION, default=INIT_ACTION_EDIT): SelectSelector(
+                    SelectSelectorConfig(options=actions)
                 ),
             }
         )
@@ -550,7 +638,12 @@ class BataviaHeatOptionsFlow(OptionsFlow):
                 CONF_SERIAL_PORT: user_input.get(CONF_SERIAL_PORT, ""),
                 CONF_BAUDRATE: user_input.get(CONF_BAUDRATE, DEFAULT_BAUDRATE),
             }
-            self._advanced_options = _normalize_advanced_options(user_input)
+            self._num_outdoor_units = user_input.get(
+                CONF_NUM_OUTDOOR_UNITS, self._num_outdoor_units
+            )
+            self._advanced_options = _normalize_advanced_options(
+                user_input, num_outdoor_units=self._num_outdoor_units
+            )
             return await self._finalize(entry)
 
         dir_options = await self.hass.async_add_executor_job(_discover_offload_dirs)
@@ -573,6 +666,7 @@ class BataviaHeatOptionsFlow(OptionsFlow):
             register_map=entry.options.get(
                 CONF_REGISTER_MAP, REGISTER_MAP_BATAVIA
             ),
+            num_outdoor_units=self._num_outdoor_units,
         )
         return self.async_show_form(step_id="details", data_schema=schema)
 
@@ -791,6 +885,7 @@ def _build_advanced_schema(
     energy_entity_module_0: str = "",
     energy_entity_module_1: str = "",
     register_map: str = REGISTER_MAP_BATAVIA,
+    num_outdoor_units: str = NUM_OUTDOOR_UNITS_SINGLE,
 ) -> vol.Schema:
     fields: dict[Any, Any] = {}
     _add_register_map(fields, entry, register_map)
@@ -805,6 +900,7 @@ def _build_advanced_schema(
         dir_options,
         energy_entity_module_0,
         energy_entity_module_1,
+        num_outdoor_units=num_outdoor_units,
     )
     return vol.Schema(fields)
 
@@ -828,11 +924,11 @@ def _add_register_map(
             options=[
                 SelectOptionDict(
                     value=REGISTER_MAP_BATAVIA,
-                    label="BataviaHeat (module 0# system map)",
+                    label="BataviaHeat",
                 ),
                 SelectOptionDict(
                     value=REGISTER_MAP_NEWNTIDE,
-                    label="Newntide R290 (corrected FC04 map)",
+                    label="Newntide",
                 ),
             ],
             mode=SelectSelectorMode.DROPDOWN,
@@ -856,13 +952,17 @@ def _add_modbus_detail_fields(
                 CONF_TCP_PORT,
                 default=_current(entry, CONF_TCP_PORT, DEFAULT_TCP_PORT),
             )
-        ] = vol.All(vol.Coerce(int), vol.Range(min=1, max=65535))
+        ] = NumberSelector(
+            NumberSelectorConfig(min=1, max=65535, step=1, mode=NumberSelectorMode.BOX)
+        )
         fields[
             vol.Optional(
                 CONF_SLAVE_ID,
                 default=_current(entry, CONF_SLAVE_ID, DEFAULT_SLAVE_ID),
             )
-        ] = vol.All(vol.Coerce(int), vol.Range(min=0, max=247))
+        ] = NumberSelector(
+            NumberSelectorConfig(min=0, max=247, step=1, mode=NumberSelectorMode.BOX)
+        )
     elif modbus_type == CONNECTION_SERIAL:
         fields[
             vol.Optional(
@@ -875,13 +975,17 @@ def _add_modbus_detail_fields(
                 CONF_BAUDRATE,
                 default=_current(entry, CONF_BAUDRATE, DEFAULT_BAUDRATE),
             )
-        ] = vol.All(vol.Coerce(int), vol.Range(min=1200, max=115200))
+        ] = NumberSelector(
+            NumberSelectorConfig(min=1200, max=115200, step=1, mode=NumberSelectorMode.BOX)
+        )
         fields[
             vol.Optional(
                 CONF_SLAVE_ID,
                 default=_current(entry, CONF_SLAVE_ID, DEFAULT_SLAVE_ID),
             )
-        ] = vol.All(vol.Coerce(int), vol.Range(min=0, max=247))
+        ] = NumberSelector(
+            NumberSelectorConfig(min=0, max=247, step=1, mode=NumberSelectorMode.BOX)
+        )
 
 
 def _add_advanced_fields(
@@ -891,57 +995,71 @@ def _add_advanced_fields(
     offload_url: str,
     offload_db_max_mb: float,
     dir_options: list[str],
-    energy_entity_module_0: str,
-    energy_entity_module_1: str,
+    energy_entity_module_0: str = "",
+    energy_entity_module_1: str = "",
+    num_outdoor_units: str = NUM_OUTDOOR_UNITS_SINGLE,
 ) -> None:
-    """Add per-unit energy meters + register offload fields."""
+    """Add the device energy meter + register offload fields.
+
+    A single unit (``num_outdoor_units == "1"``) needs one system-wide energy
+    meter. A two-unit cascade (``"2"``) additionally exposes a per-unit meter
+    for each outdoor unit, so each unit's COP/EER can be computed against its
+    own electrical draw.
+    """
     if offload_url and offload_url not in dir_options:
         dir_options.append(offload_url)
+
+    # The device's energy meter. For a single unit this is the only meter;
+    # for a cascade it measures the whole cascade's total electrical draw
+    # (system COP/EER).
+    fields[
+        vol.Optional(
+            CONF_ENERGY_ENTITY,
+            description={"suggested_value": energy_entity} if energy_entity else {},
+        )
+    ] = EntitySelector(EntitySelectorConfig(domain="sensor", device_class="energy"))
 
     # Per-cascade-unit energy meters. A two-unit cascade has two electrical
     # draws, so assigning a meter per unit lets each unit's COP/EER be computed
     # against its own power (true per-device efficiency).
-    fields.update(
-        {
-            vol.Optional(
-                CONF_ENERGY_ENTITY,
-                description={"suggested_value": energy_entity} if energy_entity else {},
-            ): EntitySelector(EntitySelectorConfig(domain="sensor", device_class="energy")),
+    if num_outdoor_units == NUM_OUTDOOR_UNITS_CASCADE:
+        fields[
             vol.Optional(
                 CONF_ENERGY_ENTITY_MODULE_0,
                 description={
                     "suggested_value": energy_entity_module_0
                 } if energy_entity_module_0 else {},
-            ): EntitySelector(
-                EntitySelectorConfig(domain="sensor", device_class="energy")
-            ),
+            )
+        ] = EntitySelector(EntitySelectorConfig(domain="sensor", device_class="energy"))
+        fields[
             vol.Optional(
                 CONF_ENERGY_ENTITY_MODULE_1,
                 description={
                     "suggested_value": energy_entity_module_1
                 } if energy_entity_module_1 else {},
-            ): EntitySelector(
-                EntitySelectorConfig(domain="sensor", device_class="energy")
-            ),
-            vol.Optional(CONF_OFFLOAD_ENABLED, default=offload_enabled): bool,
-            vol.Optional(
-                CONF_OFFLOAD_URL,
-                description={"suggested_value": offload_url} if offload_url else {},
-            ): SelectSelector(
-                SelectSelectorConfig(
-                    options=[SelectOptionDict(value=d, label=d) for d in dir_options],
-                    mode=SelectSelectorMode.DROPDOWN,
-                    custom_value=True,
-                )
-            ),
-            vol.Optional(CONF_OFFLOAD_DB_MAX_MB, default=offload_db_max_mb): NumberSelector(
-                NumberSelectorConfig(
-                    min=0, max=1024000, step=1,
-                    mode=NumberSelectorMode.BOX,
-                    unit_of_measurement="MB",
-                )
-            ),
-        }
+            )
+        ] = EntitySelector(EntitySelectorConfig(domain="sensor", device_class="energy"))
+
+    # Register offload fields (always available).
+    fields[vol.Optional(CONF_OFFLOAD_ENABLED, default=offload_enabled)] = bool
+    fields[
+        vol.Optional(
+            CONF_OFFLOAD_URL,
+            description={"suggested_value": offload_url} if offload_url else {},
+        )
+    ] = SelectSelector(
+        SelectSelectorConfig(
+            options=[SelectOptionDict(value=d, label=d) for d in dir_options],
+            mode=SelectSelectorMode.DROPDOWN,
+            custom_value=True,
+        )
+    )
+    fields[vol.Optional(CONF_OFFLOAD_DB_MAX_MB, default=offload_db_max_mb)] = NumberSelector(
+        NumberSelectorConfig(
+            min=0, max=1024000, step=1,
+            mode=NumberSelectorMode.BOX,
+            unit_of_measurement="MB",
+        )
     )
 
 
@@ -956,6 +1074,7 @@ def _build_options_schema(
     energy_entity_module_0: str,
     energy_entity_module_1: str,
     register_map: str,
+    num_outdoor_units: str = NUM_OUTDOOR_UNITS_SINGLE,
 ) -> vol.Schema:
     """Build the options-flow schema: connection mode + Modbus details + advanced.
 
@@ -964,22 +1083,23 @@ def _build_options_schema(
     """
     fields: dict[Any, Any] = {}
 
-    # ── Connection mode selector ────────────────────────────────────────────
-    # "Both" keeps cloud primary (cloud sensors win) and adds a live Modbus
-    # connection; the coordinator already runs both and prefers cloud sensors.
+    # ── Number of outdoor units (single / cascade) ───────────────────────────
+    # A single unit needs one system energy meter; a two-unit cascade can assign
+    # a meter per unit (or share one for the whole cascade). The connection mode
+    # (cloud / Modbus / both) is chosen on the init screen, not here.
     fields[
-        vol.Required(CONF_CONNECTION_TYPE, default=mode)
+        vol.Required(
+            CONF_NUM_OUTDOOR_UNITS,
+            default=num_outdoor_units,
+        )
     ] = SelectSelector(
         SelectSelectorConfig(
             options=[
                 SelectOptionDict(
-                    value=CONNECTION_MODE_CLOUD, label="Cloud (EcoHome)"
+                    value=NUM_OUTDOOR_UNITS_SINGLE, label="1 outdoor unit"
                 ),
                 SelectOptionDict(
-                    value=CONNECTION_MODE_MODBUS, label="Modbus only"
-                ),
-                SelectOptionDict(
-                    value=CONNECTION_MODE_BOTH, label="Both (Cloud + Modbus)"
+                    value=NUM_OUTDOOR_UNITS_CASCADE, label="2 outdoor units (cascade)"
                 ),
             ]
         )
@@ -1018,18 +1138,22 @@ def _build_options_schema(
         dir_options,
         energy_entity_module_0,
         energy_entity_module_1,
+        num_outdoor_units=num_outdoor_units,
     )
     return vol.Schema(fields)
 
 
 def _normalize_advanced_options(
-    user_input: dict[str, Any], modbus_type: str | None = None
+    user_input: dict[str, Any],
+    modbus_type: str | None = None,
+    num_outdoor_units: str = NUM_OUTDOOR_UNITS_SINGLE,
 ) -> dict[str, Any]:
     options = dict(user_input)
     # Connection-mode inputs live in entry.data, not options — drop them so
     # entry.options holds only the genuinely-advanced settings.
     for key in _CONNECTION_INPUT_KEYS:
         options.pop(key, None)
+    options.setdefault(CONF_NUM_OUTDOOR_UNITS, num_outdoor_units)
     options.setdefault(CONF_ENERGY_ENTITY, "")
     options.setdefault(CONF_ENERGY_ENTITY_MODULE_0, "")
     options.setdefault(CONF_REGISTER_MAP, REGISTER_MAP_BATAVIA)
@@ -1037,6 +1161,20 @@ def _normalize_advanced_options(
     options.setdefault(CONF_OFFLOAD_URL, "")
     options.setdefault(CONF_OFFLOAD_ENABLED, False)
     options.setdefault(CONF_OFFLOAD_DB_MAX_MB, DEFAULT_OFFLOAD_DB_MAX_MB)
+
+    # Cascade with a single meter: that meter measures the whole cascade, so
+    # it must be assigned to both module keys. A blank per-unit pair falls back
+    # to the system energy_entity when one is provided.
+    if num_outdoor_units == NUM_OUTDOOR_UNITS_CASCADE:
+        m0 = options[CONF_ENERGY_ENTITY_MODULE_0]
+        m1 = options[CONF_ENERGY_ENTITY_MODULE_1]
+        if m0 and not m1:
+            options[CONF_ENERGY_ENTITY_MODULE_1] = m0
+        elif m1 and not m0:
+            options[CONF_ENERGY_ENTITY_MODULE_0] = m1
+        elif not m0 and not m1 and options[CONF_ENERGY_ENTITY]:
+            options[CONF_ENERGY_ENTITY_MODULE_0] = options[CONF_ENERGY_ENTITY]
+            options[CONF_ENERGY_ENTITY_MODULE_1] = options[CONF_ENERGY_ENTITY]
     return options
 
 
