@@ -6,6 +6,7 @@
   "dependencies": [],
   "documentation": "https://github.com/RSloot2000/BataviaHeat-Heat-Pump",
   "iot_class": "local_polling",
+  "categories": ["iot", "monitoring", "living-control"],
   "issue_tracker": "https://github.com/RSloot2000/BataviaHeat-Heat-Pump/issues",
   "requirements": ["pymodbus>=3.6.0"],
   "version": "0.6.0"
