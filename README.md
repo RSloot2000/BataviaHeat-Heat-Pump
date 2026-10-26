@@ -20,6 +20,19 @@ Custom Home Assistant integration for the **BataviaHeat R290 3–8 kW Monobloc**
 
 Cloud and a local Modbus connection can be combined: cloud acts as primary (setpoints, cloud-only sensors) and Modbus provides faster updates and deeper register access as backup/extension.
 
+## Contributing
+
+- Want to help develop the project? All help is welcome!
+- Want to become a co-developer of the project? Open a discussion topic or an issue!
+   - Knowledge of Python and HACS repo structure is a prerequisite!
+
+This integration was built by reverse-engineering the Modbus protocol. Contributions are welcome:
+
+1. Use the [Modbus snooper tools](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/tree/main/tools) to scan your heat pump
+2. Share discovered register definitions
+3. Report issues with register values or entity behaviour
+4. Suggest new features or improvements
+
 ## Supported devices
 
 The integration currently supports the following R290 monobloc heat pumps (3–8 kW):
@@ -27,7 +40,7 @@ The integration currently supports the following R290 monobloc heat pumps (3–8
 - **BataviaHeat R290** 3–8 kW Monobloc (confirmed)
 - **Newntide R290** 3–8 kW Monobloc (confirmed)
 
-> **Two brands, two Modbus maps:** BataviaHeat and Newntide pumps are the same R290 hardware line but ship with **different Modbus register maps**. Select the register map that matches your unit's brand and firmware — using the wrong one will read/write the wrong registers. The Newntide register map is documented in the source spreadsheet [`docs/BP-MODBUS_Engress-Version.1.xlsx`](docs/BP-MODBUS_Engress-Version.1.xlsx), which can also be found on the Newntide website. No such file has been found for the bataviaheat registers, but an attempt at decoding the Modbus map was made — those registers can be found in: [docs/tablet-parameters-en.md](docs/tablet-parameters-en.md) or [docs/tablet-parameters.md](docs/tablet-parameters.md).
+> **Two brands, two Modbus maps:** BataviaHeat and Newntide pumps are the same R290 hardware line but ship with **different Modbus register maps**. Select the register map that matches your unit's brand and firmware — using the wrong one will read/write the wrong registers. The Newntide register map is documented in the source spreadsheet [`docs/BP-MODBUS_Engress-Version.1.xlsx`](docs/BP-MODBUS_Engress-Version.1.xlsx) (with thanks to user [ejs7272](https://github.com/ejs7272) for first supplying this document), and can also be found on the Newntide website. No such file has been found for the bataviaheat registers, but an attempt at decoding the Modbus map was made — those registers can be found in: [docs/tablet-parameters-en.md](docs/tablet-parameters-en.md) or [docs/tablet-parameters.md](docs/tablet-parameters.md).
 
 This integration will likely work with other Newntide-based heat pumps that share the same Modbus register map, such as other Newntide OEM/white-label rebrands with identical controller hardware.
 
@@ -37,6 +50,7 @@ I can only provide support for the Bataviaheat pump, since that is the only pump
 ## Table of contents
 
 - [Features](#features)
+- [Contributing](#contributing)
 - [Supported devices](#supported-devices)
 - [Hardware Requirements](#hardware-requirements)
 - [Installation](#installation)
@@ -48,7 +62,6 @@ I can only provide support for the Bataviaheat pump, since that is the only pump
 - [COP calculation](#cop-calculation)
 - [Troubleshooting](#troubleshooting)
 - [Documentation](#documentation)
-- [Contributing](#contributing)
 - [RS-485 adapter installation](#rs-485-adapter-installation)
 - [License](#license)
 
@@ -340,15 +353,6 @@ The [`docs/`](docs/) folder contains reference documentation for the BataviaHeat
 
 - **[tablet-parameters.md](docs/tablet-parameters.md)** (NL) — Complete list of all installer parameters (N/M/F/P/G series) with HR-addresses, ranges, default values, error codes (E/F series), and optimization tips
 - **[tablet-parameters-en.md](docs/tablet-parameters-en.md)** (EN) — Same content in English
-
-## Contributing
-
-This integration was built by reverse-engineering the Modbus protocol. Contributions are welcome:
-
-1. Use the [Modbus snooper tools](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/tree/main/tools) to scan your heat pump
-2. Share discovered register definitions
-3. Report issues with register values or entity behaviour
-4. Suggest new features or improvements
 
 ## RS-485 adapter installation
 

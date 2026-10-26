@@ -62,6 +62,10 @@ class BataviaHeatSwitch(RestoreEntity, BataviaHeatEntity, SwitchEntity):
         self._on_coil = reg_info["on_coil"]
         self._off_coil = reg_info["off_coil"]
         self._is_on: bool | None = None
+        # Intended state while a write is propagating to the (laggy) backend.
+        # While pending, is_on reports this instead of the stale hardware register
+        # so the switch doesn't flip back to its old value mid-transition.
+        self._pending: bool | None = None
         self._parent: BataviaHeatSwitch | None = None
 
         # Optional: holding register that reflects the actual hardware state
@@ -85,12 +89,24 @@ class BataviaHeatSwitch(RestoreEntity, BataviaHeatEntity, SwitchEntity):
 
     @property
     def is_on(self) -> bool | None:
-        """Return switch state from hardware register or assumed state."""
+        """Return switch state from hardware register or assumed state.
+
+        If a command was just issued and the hardware register has not caught up
+        yet, report the *intended* state instead of the stale register value.
+        This stops the switch from flip-flopping while a slow backend register
+        lags behind the user's command; it self-corrects once the register
+        confirms the transition.
+        """
         if self._state_register and self.coordinator.data:
             reg_type, addr = self._state_register
             val = self.coordinator.data.get(reg_type, {}).get(addr)
             if val is not None:
-                return val > 0
+                hardware_on = val > 0
+                if self._pending is not None and hardware_on != self._pending:
+                    # Register still shows the old value — trust the command we just
+                    # issued until the hardware confirms the transition.
+                    return self._pending
+                return hardware_on
         return self._is_on
 
     async def async_added_to_hass(self) -> None:
@@ -108,10 +124,12 @@ class BataviaHeatSwitch(RestoreEntity, BataviaHeatEntity, SwitchEntity):
         """Turn the switch on by writing the ON coil."""
         await self.coordinator.async_write_coil(self._on_coil, True)
         self._is_on = True
+        self._pending = True
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off by writing the OFF coil."""
         await self.coordinator.async_write_coil(self._off_coil, True)
         self._is_on = False
+        self._pending = False
         self.async_write_ha_state()
