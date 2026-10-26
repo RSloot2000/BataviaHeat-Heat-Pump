@@ -6,7 +6,7 @@
   "dependencies": [],
   "documentation": "https://github.com/RSloot2000/BataviaHeat-Heat-Pump",
   "iot_class": "local_polling",
-  "categories": ["climate", "sensors", "hubs_protocols"],
+  "categories": ["climate.heat_pumps_air_conditioning", "sensors.temperature_humidity", "hubs_protocols.building_automation"],
   "issue_tracker": "https://github.com/RSloot2000/BataviaHeat-Heat-Pump/issues",
   "requirements": ["pymodbus>=3.6.0"],
   "version": "0.6.0"
