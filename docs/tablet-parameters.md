@@ -518,7 +518,7 @@ De drie wijzigingen (M02=35, M11=17, P01=1) plus de optionele M21=38 resulteerde
 
 | Adres | Parameter | Eenheid | Schaal | Tablet code | Opmerkingen |
 |-------|-----------|---------|--------|-------------|-------------|
-| HR[768] | Operationele status | — | ×1 | T12 | >0 = unit draait; state_register voor unit_power switch |
+| HR[768] | Operationele status | — | ×1 | T12 | >0 = unit draait; aparte operationele_status sensor (geen feedback voor unit_power) |
 | HR[772] | Berekend verwarmings-setpoint | °C | ×0.1 | T17 | Actief stooklijn-setpoint; geïnterpoleerd uit curve-parameters. Ontdekt april 2026 |
 | HR[773] | Compressor uitlaattemperatuur | °C | ×0.1 | — | Discharge temp (HR-kopie) |
 | HR[776] | Water uitlaattemperatuur | °C | ×0.1 | — | Systeemwater uitlaat |
@@ -580,12 +580,12 @@ De drie wijzigingen (M02=35, M11=17, P01=1) plus de optionele M21=38 resulteerde
 
 | Coil | Functie | State register | In integratie |
 |------|---------|----------------|---------------|
-| 1024 | Unit AAN | HR[768] > 0 = aan | ✓ switch (unit_power) |
-| 1025 | Unit UIT | HR[768] = 0 = uit | ✓ (off_coil) |
-| 1073 | Stille modus AAN | Geen ⚠ | ✓ switch (silent_mode, RestoreEntity) |
-| 1074 | Stille modus UIT | Geen ⚠ | ✓ (off_coil) |
-| 1075 | Stil niveau 1 (laag) | Geen ⚠ | ✓ (off_coil van silent_level_2) |
-| 1076 | Stil niveau 2 (hoog) | Geen ⚠ | ✓ switch (silent_level_2, RestoreEntity) |
+| 1024 | Unit AAN | HR[912] > 0 = aan | ✓ switch (unit_power) |
+| 1025 | Unit UIT | HR[912] = 0 = uit | ✓ (off_coil) |
+| 1073 | Stille modus AAN | HR[913] (trag, pending-guarded) | ✓ switch (silent_mode) |
+| 1074 | Stille modus UIT | HR[913] (trag, pending-guarded) | ✓ (off_coil) |
+| 1075 | Stil niveau 1 (laag) | HR[913] (trag, pending-guarded) | ✓ (off_coil van silent_level_2) |
+| 1076 | Stil niveau 2 (hoog) | HR[913] (trag, pending-guarded) | ✓ switch (silent_level_2) |
 
 ### Berekende sensoren (niet uit Modbus register)
 
@@ -625,9 +625,11 @@ De drie wijzigingen (M02=35, M11=17, P01=1) plus de optionele M21=38 resulteerde
 
 **Geen bruikbaar hardware-feedbackregister gevonden voor stille modus.**
 
-De warmtepomp heeft geen register dat de huidige silent mode status reflecteert.
+De warmtepomp heeft geen register dat de huidige silent mode status *betrouwbaar en snel* reflecteert — HR[36] en HR[1309] gaan naar 65535 bij een toggle, en HR[768]/HR[1283] veranderen niet.
 De coils (1073-1076) zijn write-only puls-commando's zonder uitleesbare tegenhanger.
-De HACS integratie gebruikt daarom `RestoreEntity` (HA persistent state) voor de silent_mode en silent_level_2 switches.
+De HACS integratie gebruik daarom `RestoreEntity` (HA persistent state) voor de silent_mode en silent_level_2 switches.
+
+**Update**: de integratie leest HR[913] (Run flag 1, B1: silent mode level) echter ook als *aanvullende* feedback via de `state_register` van de switch. Dat register loopt achter, dus de switch rapporteeert een bedoelde `_pending`-status tot 913 de transitie bevestigt (zie de flip-flop-fix in [switch.py](HACS custom integration/BataviaHeat-R290-Modbus/custom_components/batavia_heat/switch.py)). Het wordt niet als betrouwbare standalone-statusregister behandeld.
 
 Mogelijke toekomstige locatie: bereik HR[300-699] of HR[1400-6399] (nog niet gescand).
 

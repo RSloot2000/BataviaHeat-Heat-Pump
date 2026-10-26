@@ -5,33 +5,36 @@
 [![Hassfest](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/actions/workflows/hassfest.yml/badge.svg)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/actions/workflows/hassfest.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/releases)
 [![GitHub Release Date](https://img.shields.io/github/release-date/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/releases)
-![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.4.0%2B-blue?logo=home-assistant)
+![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.11.0%2B-blue?logo=home-assistant)
 [![License](https://img.shields.io/github/license/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/blob/main/LICENSE)
 [![GitHub issues](https://img.shields.io/github/issues/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/issues)
 [![GitHub PRs](https://img.shields.io/github/issues-pr/RSloot2000/BataviaHeat-Heat-Pump)](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/pulls)
 ![Maintenance](https://img.shields.io/maintenance/yes/2026)
 
-Custom Home Assistant integration for the **BataviaHeat R290 3–8 kW Monobloc** heat pump. Supports four connection types:
+Custom Home Assistant integration for the **BataviaHeat/Newntide R290 3–8 kW Monobloc** heat pump. Supports four connection types:
 
 - **Cloud** — via your EcoHome app account (no extra hardware, works remotely)
-- **DR164 gateway** — Modbus TCP via RS485-to-WiFi converter (local, fast)
-- **ESP32 proxy** — Modbus TCP via ESP32-S3 proxy (local, fast)
+- **DR164 gateway** — Modbus TCP via RS485-to-WiFi converter
+- **ESP32 proxy** — Modbus TCP via ESP32-S3 proxy
 - **Modbus RTU** — direct USB RS-485 serial connection
 
 Cloud and a local Modbus connection can be combined: cloud acts as primary (setpoints, cloud-only sensors) and Modbus provides faster updates and deeper register access as backup/extension.
 
+The **DR164 gateway**, **ESP32 proxy** and **Modbus RTU** connection types all **need** additional hardware to be installed.  
+See [RS-485 adapter installation](#rs-485-adapter-installation) and [ESP32 Modbus Proxy Firmware](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/tree/main/firmware) for more info.
+
 ## Contributing
 
-- Want to help develop the project? All help is welcome!
-- Want to become a co-developer of the project? Open a discussion topic or an issue!
-   - Knowledge of Python and HACS repo structure is a prerequisite!
-
+Want to help develop the project?  
 This integration was built by reverse-engineering the Modbus protocol. Contributions are welcome:
 
 1. Use the [Modbus snooper tools](https://github.com/RSloot2000/BataviaHeat-Heat-Pump/tree/main/tools) to scan your heat pump
 2. Share discovered register definitions
 3. Report issues with register values or entity behaviour
 4. Suggest new features or improvements
+
+Want to become a co-developer of the project? Open a discussion topic or an issue and mention you want to get involved!  
+Knowledge of Python and HACS repo structure is a prerequisite!
 
 ## Supported devices
 
@@ -40,7 +43,7 @@ The integration currently supports the following R290 monobloc heat pumps (3–8
 - **BataviaHeat R290** 3–8 kW Monobloc (confirmed)
 - **Newntide R290** 3–8 kW Monobloc (confirmed)
 
-> **Two brands, two Modbus maps:** BataviaHeat and Newntide pumps are the same R290 hardware line but ship with **different Modbus register maps**. Select the register map that matches your unit's brand and firmware — using the wrong one will read/write the wrong registers. The Newntide register map is documented in the source spreadsheet [`docs/BP-MODBUS_Engress-Version.1.xlsx`](docs/BP-MODBUS_Engress-Version.1.xlsx) (with thanks to user [ejs7272](https://github.com/ejs7272) for first supplying this document), and can also be found on the Newntide website. No such file has been found for the bataviaheat registers, but an attempt at decoding the Modbus map was made — those registers can be found in: [docs/tablet-parameters-en.md](docs/tablet-parameters-en.md) or [docs/tablet-parameters.md](docs/tablet-parameters.md).
+> **Two brands, two Modbus maps:** BataviaHeat and Newntide pumps are the same R290 hardware line but ship with **different Modbus register maps**. Select the register map that matches your unit's brand and firmware — using the wrong one will read/write the wrong registers. The Newntide register map is documented in the source spreadsheet [`docs/BP-MODBUS_Engress-Version.1.xlsx`](docs/BP-MODBUS_Engress-Version.1.xlsx) (with thanks to user [ejs7272](https://github.com/ejs7272) for first supplying this document), and can also be found on the [Newntide website](https://www.newntide.nl/wp-content/uploads/2026/04/BP-MODBUS_English-Version.xlsx). No such file has been found for the bataviaheat registers, but an attempt at decoding the Modbus map was made — those registers can be found in: [docs/tablet-parameters-en.md](docs/tablet-parameters-en.md) or [docs/tablet-parameters.md](docs/tablet-parameters.md).
 
 This integration will likely work with other Newntide-based heat pumps that share the same Modbus register map, such as other Newntide OEM/white-label rebrands with identical controller hardware.
 

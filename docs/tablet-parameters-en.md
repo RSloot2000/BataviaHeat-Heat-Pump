@@ -518,7 +518,7 @@ The three changes (M02=35, M11=17, P01=1) plus the optional M21=38 resulted in:
 
 | Address | Parameter | Unit | Scale | Tablet Code | Notes |
 |---------|-----------|------|-------|-------------|-------|
-| HR[768] | Operational status | — | ×1 | T12 | >0 = unit running; state_register for unit_power switch |
+| HR[768] | Operational status | — | ×1 | T12 | >0 = unit running; separate operational_status sensor (not the unit_power feedback) |
 | HR[772] | Calculated heating setpoint | °C | ×0.1 | T17 | Active heating curve setpoint; interpolated from curve parameters. Discovered April 2026 |
 | HR[773] | Compressor discharge temperature | °C | ×0.1 | — | Discharge temp (HR copy) |
 | HR[776] | Water outlet temperature | °C | ×0.1 | — | System water outlet |
@@ -580,12 +580,12 @@ The three changes (M02=35, M11=17, P01=1) plus the optional M21=38 resulted in:
 
 | Coil | Function | State Register | In Integration |
 |------|----------|----------------|----------------|
-| 1024 | Unit ON | HR[768] > 0 = on | ✓ switch (unit_power) |
-| 1025 | Unit OFF | HR[768] = 0 = off | ✓ (off_coil) |
-| 1073 | Silent mode ON | None ⚠ | ✓ switch (silent_mode, RestoreEntity) |
-| 1074 | Silent mode OFF | None ⚠ | ✓ (off_coil) |
-| 1075 | Silent level 1 (low) | None ⚠ | ✓ (off_coil for silent_level_2) |
-| 1076 | Silent level 2 (high) | None ⚠ | ✓ switch (silent_level_2, RestoreEntity) |
+| 1024 | Unit ON | HR[912] > 0 = on | ✓ switch (unit_power) |
+| 1025 | Unit OFF | HR[912] = 0 = off | ✓ (off_coil) |
+| 1073 | Silent mode ON | HR[913] (laggy, pending-guarded) | ✓ switch (silent_mode) |
+| 1074 | Silent mode OFF | HR[913] (laggy, pending-guarded) | ✓ (off_coil) |
+| 1075 | Silent level 1 (low) | HR[913] (laggy, pending-guarded) | ✓ (off_coil for silent_level_2) |
+| 1076 | Silent level 2 (high) | HR[913] (laggy, pending-guarded) | ✓ switch (silent_level_2) |
 
 ### Calculated Sensors (not from Modbus register)
 
@@ -625,9 +625,11 @@ The three changes (M02=35, M11=17, P01=1) plus the optional M21=38 resulted in:
 
 **No usable hardware feedback register found for silent mode.**
 
-The heat pump has no register that reflects the current silent mode status.
+The heat pump has no register that *reliably and promptly* reflects the current silent mode status — HR[36] and HR[1309] go to 65535 on toggle, and HR[768]/HR[1283] do not move.
 The coils (1073-1076) are write-only pulse commands without a readable counterpart.
 The HACS integration therefore uses `RestoreEntity` (HA persistent state) for the silent_mode and silent_level_2 switches.
+
+**Update:** the integration also reads HR[913] (Run flag 1, B1: silent mode level) as a *supplementary* feedback via the switch's `state_register`. It is known to lag behind the actual state, so the switch reports an intended `_pending` state until 913 confirms the transition (see the flip-flop fix in [switch.py](HACS custom integration/BataviaHeat-R290-Modbus/custom_components/batavia_heat/switch.py)). It is not treated as a reliable standalone status register.
 
 Possible future location: range HR[300-699] or HR[1400-6399] (not yet scanned).
 

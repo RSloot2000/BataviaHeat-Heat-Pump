@@ -13,9 +13,9 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import Device
+from homeassistant.helpers.device_registry import DeviceEntry as Device
 from homeassistant.helpers.entity_registry import RegistryEntry
-from homeassistant.util.json import async_redact_data
+from homeassistant.helpers.redact import async_redact_data
 
 from .const import (
     CONF_CLOUD_PASSWORD_HASH,
