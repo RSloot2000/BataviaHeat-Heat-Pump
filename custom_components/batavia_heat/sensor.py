@@ -351,12 +351,25 @@ class BataviaHeatSensor(BataviaHeatEntity, SensorEntity):
         else:
             self._attr_state_class = SensorStateClass.MEASUREMENT
 
+        # Probe error range for temperature sensors (e.g., DHW tank probe).
+        # When raw value is in this range, the sensor is treated as unavailable.
+        # Used by register 3351 (DHW tank temp): -32700 to -32703 means disconnected.
+        self._probe_error_range: tuple[int, int] | None = reg_info.get("probe_error_range")
+
     @property
     def native_value(self) -> float | None:
         """Return the sensor value."""
         if self.coordinator.data is None:
             return None
-        return self.coordinator.data.get(self._reg_type, {}).get(self._address)
+        val = self.coordinator.data.get(self._reg_type, {}).get(self._address)
+        if val is None:
+            return None
+        # Check for probe error range (e.g., DHW tank probe disconnected)
+        if self._probe_error_range and isinstance(val, (int, float)):
+            low, high = self._probe_error_range
+            if low <= val <= high:
+                return None
+        return val
 
 
 class BataviaHeatCalculatedSensor(SensorEntity):

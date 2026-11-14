@@ -133,6 +133,9 @@ HOLDING_REGISTERS: dict[int, dict] = {
         "scale": 1,
         "entity_type": "binary_sensor",
         "icon": "mdi:power",
+        # HR[912] bit 0 = unit power state (0=off, 1=on)
+        # Note: HR[912] contains multiple bits; bit 0 is power, bit 2 is hot water.
+        "state_bit": 0,
     },
     913: {
         "name": "silent_mode_state",
@@ -427,7 +430,7 @@ HOLDING_REGISTERS: dict[int, dict] = {
         "device_class": "temperature",
         "unit": "°C",
         "scale": 1,
-        "min": 20,
+        "min": 10,
         "max": 29,
         "entity_type": "number",
         "icon": "mdi:snowflake-thermometer",
@@ -437,8 +440,8 @@ HOLDING_REGISTERS: dict[int, dict] = {
         "device_class": "temperature",
         "unit": "°C",
         "scale": 1,
-        "min": 10,
-        "max": 17,
+        "min": 20,
+        "max": 35,
         "entity_type": "number",
         "icon": "mdi:snowflake-thermometer",
     },
@@ -734,6 +737,22 @@ INPUT_REGISTERS: dict[int, dict] = {
         "scale": 0.1,
         "entity_type": "sensor",
     },
+
+    # ─── DHW / Hot Water Tank Temperature (Newntide R290) ───
+    # Register 3351: hot water tank temperature (input register, FC04).
+    # Verified by user ejs7272 on Newntide R290 20 kW (2 modules).
+    # Returns -32700 to -32703 when probe is disconnected → treated as unavailable.
+    # See issue #6 for details.
+    3351: {
+        "name": "dhw_tank_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 0.1,
+        "entity_type": "sensor",
+        "icon": "mdi:thermometer-water",
+        # Probe error values: -32700 to -32703 means disconnected
+        "probe_error_range": (-32700, -32703),
+    },
 }
 
 # ── Coils (pulse-based, FC05) ──
@@ -747,8 +766,11 @@ COILS: dict[int, dict] = {
         "off_coil": 1025,
         "entity_type": "switch",
         "icon": "mdi:power",
-        # HR[912] unit power mirror: 0=off, 1=on (more reliable than HR[768])
+        # HR[912] bit 0 = unit power state (0=off, 1=on)
+        # Note: HR[912] contains multiple bits; bit 0 is power, bit 2 is hot water.
+        # Using state_bit ensures correct reading of only the power bit.
         "state_register": {"type": "holding", "address": 912},
+        "state_bit": 0,
     },
     1073: {
         "name": "silent_mode",
@@ -766,6 +788,25 @@ COILS: dict[int, dict] = {
         "entity_type": "switch",
         "icon": "mdi:volume-low",
         "requires": 1073,  # Only available when silent_mode is ON
+        # HR[913] bit 1 = level 2 selected (0 = level 1)
+        # Note: When silent mode is on, bit 0 indicates silent mode active,
+        # and bit 1 indicates level 2 selected.
+        "state_register": {"type": "holding", "address": 913},
+        "state_bit": 1,
+    },
+    # ─── Hot Water / DHW Switch (Newntide R290) ───
+    # Coil 1028 = hot water ON, coil 1029 = hot water OFF (FC05).
+    # State from HR[912] bit 2 (hot water operating sign).
+    # See issue #6 for details.
+    1028: {
+        "name": "dhw_hot_water",
+        "on_coil": 1028,
+        "off_coil": 1029,
+        "entity_type": "switch",
+        "icon": "mdi:water-boiler",
+        # HR[912] bit 2 = hot water operating sign (0=off, 1=on)
+        "state_register": {"type": "holding", "address": 912},
+        "state_bit": 2,
     },
 }
 

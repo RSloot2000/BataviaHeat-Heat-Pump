@@ -74,6 +74,9 @@ class BataviaHeatSwitch(RestoreEntity, BataviaHeatEntity, SwitchEntity):
         if sr := reg_info.get("state_register"):
             self._state_register = (sr["type"], sr["address"])
 
+        # Optional: bit position within state_register (e.g., bit 2 of HR[912])
+        self._state_bit: int | None = reg_info.get("state_bit")
+
     def set_parent(self, parent: BataviaHeatSwitch) -> None:
         """Set a parent switch that must be ON for this switch to be available."""
         self._parent = parent
@@ -101,7 +104,11 @@ class BataviaHeatSwitch(RestoreEntity, BataviaHeatEntity, SwitchEntity):
             reg_type, addr = self._state_register
             val = self.coordinator.data.get(reg_type, {}).get(addr)
             if val is not None:
-                hardware_on = val > 0
+                # Check for state_bit (e.g., HR[912] bit 2 for hot water operating sign)
+                if self._state_bit is not None:
+                    hardware_on = bool(val & (1 << self._state_bit))
+                else:
+                    hardware_on = val > 0
                 if self._pending is not None and hardware_on != self._pending:
                     # Register still shows the old value — trust the command we just
                     # issued until the hardware confirms the transition.

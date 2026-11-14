@@ -336,6 +336,9 @@
       "hot_water_tank_temperature": {
         "name": "Hot water tank temperature"
       },
+      "dhw_tank_temperature": {
+        "name": "DHW tank temperature"
+      },
       "buffer_top_temperature": {
         "name": "Buffer top temperature"
       },
@@ -521,6 +524,9 @@
       },
       "silent_level_2": {
         "name": "Silent level 2"
+      },
+      "dhw_hot_water": {
+        "name": "Hot water on/off"
       }
     },
     "select": {

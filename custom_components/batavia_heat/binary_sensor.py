@@ -66,6 +66,9 @@ class BataviaHeatBinarySensor(BataviaHeatEntity, BinarySensorEntity):
         if dc := reg_info.get("device_class"):
             self._attr_device_class = DEVICE_CLASS_MAP.get(dc)
 
+        # Optional: bit position within register (e.g., bit 0 of HR[912])
+        self._state_bit: int | None = reg_info.get("state_bit")
+
     @property
     def is_on(self) -> bool | None:
         """Return the state of the binary sensor."""
@@ -74,4 +77,7 @@ class BataviaHeatBinarySensor(BataviaHeatEntity, BinarySensorEntity):
         val = self.coordinator.data.get(self._reg_type, {}).get(self._address)
         if val is None:
             return None
+        # Check for state_bit (e.g., HR[912] bit 0 for unit power state)
+        if self._state_bit is not None:
+            return bool(val & (1 << self._state_bit))
         return bool(val)

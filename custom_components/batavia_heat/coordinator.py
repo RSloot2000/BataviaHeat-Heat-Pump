@@ -96,6 +96,7 @@ _INPUT_READ_GROUPS: list[tuple[int, int]] = [
     (53, 2),      # IR[53-54]: pump target speed, flow rate
     (66, 1),      # IR[66]: pump control signal
     (135, 8),     # IR[135-142]: HX temps, module temps, pump feedback
+    (3351, 1),    # IR[3351]: DHW tank temperature (Newntide R290)
 ]
 
 # ── Register-map variants (issue #5) ─────────────────────────────────────
@@ -132,6 +133,7 @@ _NEWNTIDE_READ_GROUPS: list[tuple[int, int, int, list[tuple[str, int]] | None]] 
     (4, 1310, 2, [("input", 32), ("input", 33)]),  # low/high pressure
     (4, 1352, 4, [("input", 53), ("input", 54), ("input", 66), ("input", 142)]),  # pump telemetry
     (4, 912, 2, [("holding", 912), ("holding", 913)]),  # run flags 0/1 (mirrors)
+    (4, 3351, 1, None),  # IR[3351]: DHW tank temperature (newntide)
     # FC03 — holding registers (read fine on Newntide; standard decode)
     (3, 768, 1, None),     # operational status
     (3, 772, 1, None),     # heating target setpoint
@@ -143,7 +145,7 @@ _NEWNTIDE_READ_GROUPS: list[tuple[int, int, int, list[tuple[str, int]] | None]] 
     (3, 6400, 1, None),    # working mode
     (3, 6401, 8, None),    # cool/heat setpoints + room targets + zone B
     (3, 6425, 12, None),   # zone A/B curves + cool/heat custom curve pts
-    (3, 6465, 1, None),    # N01 power mode
+    (3, 6410, 1, None),    # N01 power mode
     (3, 6472, 1, None),    # P01 pump operating mode
     (3, 6507, 1, None),    # P09 pump intermittent stop time
     (3, 6511, 1, None),    # P20 pump intermittent run time

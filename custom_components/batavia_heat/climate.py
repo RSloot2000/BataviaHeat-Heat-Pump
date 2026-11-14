@@ -179,7 +179,7 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
     def _is_unit_on(self) -> bool:
         """Return True if the unit is powered on.
 
-        Uses the Modbus power mirror (HR[912], fallback HR[768]); falls back to
+        Uses the Modbus power mirror (HR[912] bit 0, fallback HR[768]); falls back to
         the cloud power state (address 1017) when Modbus is absent.
         """
         if self.coordinator.data is None:
@@ -187,7 +187,8 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
         holding = self.coordinator.data.get("holding", {})
         power = holding.get(REG_POWER_STATE)
         if power is not None:
-            return power > 0
+            # HR[912] contains multiple bits; bit 0 is power state
+            return bool(power & 1)
         status = holding.get(REG_OP_STATUS)
         if status is not None:
             return status > 0

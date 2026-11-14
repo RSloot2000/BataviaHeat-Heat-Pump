@@ -218,6 +218,7 @@
       "room_temperature": { "name": "Kamertemperatuur" },
       "compressor_speed": { "name": "Compressorsnelheid" },
       "hot_water_tank_temperature": { "name": "Warmwatertank-temperatuur" },
+      "dhw_tank_temperature": { "name": "DHW tank temperatuur" },
       "buffer_top_temperature": { "name": "Buffertank boven-temperatuur" },
       "buffer_bottom_temperature": { "name": "Buffertank onder-temperatuur" },
       "cloud_outdoor_temperature": { "name": "Buitentemperatuur (cloud)" },
@@ -281,7 +282,8 @@
     "switch": {
       "unit_power": { "name": "Unit-voeding" },
       "silent_mode": { "name": "Stille modus" },
-      "silent_level_2": { "name": "Stil niveau 2" }
+      "silent_level_2": { "name": "Stil niveau 2" },
+      "dhw_hot_water": { "name": "Warmwater aan/uit" }
     },
     "select": {
       "power_mode": {
