@@ -27,13 +27,13 @@ async def async_setup_entry(
     entities: dict[int, BataviaHeatSwitch] = {}
 
     # Coil switches write FC05 pulses — they need a Modbus connection. In a
-    # cloud-only entry every toggle would fail, so don't create dead entities.
+    # cloud-only entry only coils with a cloud control address (a
+    # getDeviceDetailV3 switchAddress, e.g. DHW on/off at 1020) can work;
+    # every other toggle would fail, so don't create dead entities.
     entry_data = coordinator.config_entry.data
-    if entry_data.get("connection_type") == CONNECTION_CLOUD and not entry_data.get(
-        "modbus_enabled", False
-    ):
-        _LOGGER.debug("Cloud-only entry — skipping coil switches")
-        return
+    cloud_only = entry_data.get("connection_type") == CONNECTION_CLOUD and not (
+        entry_data.get("modbus_enabled", False)
+    )
 
     register_map = coordinator.register_map
     for addr, base_info in COILS.items():
@@ -42,13 +42,25 @@ async def async_setup_entry(
         # Merge per-variant coil overrides (e.g. Newntide unit power is coils
         # 0/1, not 1024/1025 which are its Zone A command coils).
         reg_info = resolve_coil_info(addr, register_map)
-        if reg_info.get("entity_type") == "switch":
+        if reg_info.get("entity_type") != "switch":
+            continue
+        cloud_addr = reg_info.get("cloud_switch")
+        if cloud_only:
+            if cloud_addr is None:
+                _LOGGER.debug("Cloud-only entry — skipping coil switch %s", addr)
+                continue
+            entities[addr] = BataviaHeatSwitch(
+                coordinator, addr, reg_info, cloud_address=cloud_addr
+            )
+        else:
             entities[addr] = BataviaHeatSwitch(coordinator, addr, reg_info)
 
-    # Wire up parent dependencies (e.g. silent_level_2 depends on silent_mode)
+    # Wire up parent dependencies (e.g. silent_level_2 depends on silent_mode).
+    # .get() because a cloud-only entry may not have created the parent.
     for addr, entity in entities.items():
         if parent_addr := COILS[addr].get("requires"):
-            entity.set_parent(entities[parent_addr])
+            if parent := entities.get(parent_addr):
+                entity.set_parent(parent)
 
     async_add_entities(entities.values())
 
@@ -60,6 +72,13 @@ class BataviaHeatSwitch(RestoreEntity, BataviaHeatEntity, SwitchEntity):
     There is no readable coil state — state is determined by:
       1. state_register: a holding register that reflects hardware state (e.g. HR[768])
       2. RestoreEntity: persists assumed state across HA restarts (fallback)
+
+    Cloud-backed mode (``cloud_address`` set, used for cloud-only entries):
+    state is read from ``data["cloud"][cloud_address]`` (the real
+    getDeviceDetailV3 curSwitch value) and writes go through
+    updateSwitchSate.json instead of the coils. The base class then provides
+    availability and auto-hide from the cloud address, so units that do not
+    expose the switch simply get a hidden entity.
     """
 
     _attr_assumed_state = True
@@ -71,9 +90,19 @@ class BataviaHeatSwitch(RestoreEntity, BataviaHeatEntity, SwitchEntity):
         coordinator: BataviaHeatCoordinator,
         address: int,
         reg_info: dict,
+        cloud_address: int | None = None,
     ) -> None:
         """Initialize the switch."""
-        super().__init__(coordinator, "coil", address, reg_info)
+        self._cloud_switch = cloud_address
+        if cloud_address is not None:
+            super().__init__(coordinator, "cloud", cloud_address, reg_info)
+            # curSwitch is a real reported state, not an assumed one.
+            self._attr_assumed_state = False
+            # Data-backed by the cloud address — units that do not expose
+            # this switch get auto-hidden instead of a dead entity.
+            self._auto_hide_when_missing = True
+        else:
+            super().__init__(coordinator, "coil", address, reg_info)
         self._on_coil = reg_info["on_coil"]
         self._off_coil = reg_info["off_coil"]
         self._is_on: bool | None = None
@@ -99,7 +128,11 @@ class BataviaHeatSwitch(RestoreEntity, BataviaHeatEntity, SwitchEntity):
     @property
     def available(self) -> bool:
         """Available when coordinator is connected and parent (if any) is ON."""
-        if not self.coordinator.last_update_success:
+        if self._cloud_switch is not None:
+            # Cloud-backed: base class also checks the cloud address is present.
+            if not super().available:
+                return False
+        elif not self.coordinator.last_update_success:
             return False
         if self._parent is not None and self._parent.is_on is False:
             return False
@@ -115,6 +148,16 @@ class BataviaHeatSwitch(RestoreEntity, BataviaHeatEntity, SwitchEntity):
         lags behind the user's command; it self-corrects once the register
         confirms the transition.
         """
+        if self._cloud_switch is not None:
+            val = (self.coordinator.data or {}).get("cloud", {}).get(
+                self._cloud_switch
+            )
+            if val is not None:
+                hardware_on = val > 0
+                if self._pending is not None and hardware_on != self._pending:
+                    return self._pending
+                return hardware_on
+            return self._is_on
         if self._state_register and self.coordinator.data:
             reg_type, addr = self._state_register
             val = self.coordinator.data.get(reg_type, {}).get(addr)
@@ -143,15 +186,21 @@ class BataviaHeatSwitch(RestoreEntity, BataviaHeatEntity, SwitchEntity):
                     self._is_on = False
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Turn the switch on by writing the ON coil."""
-        await self.coordinator.async_write_coil(self._on_coil, True)
+        """Turn the switch on by writing the ON coil (or cloud switch)."""
+        if self._cloud_switch is not None:
+            await self.coordinator.async_cloud_set_switch(self._cloud_switch, True)
+        else:
+            await self.coordinator.async_write_coil(self._on_coil, True)
         self._is_on = True
         self._pending = True
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        """Turn the switch off by writing the OFF coil."""
-        await self.coordinator.async_write_coil(self._off_coil, True)
+        """Turn the switch off by writing the OFF coil (or cloud switch)."""
+        if self._cloud_switch is not None:
+            await self.coordinator.async_cloud_set_switch(self._cloud_switch, False)
+        else:
+            await self.coordinator.async_write_coil(self._off_coil, True)
         self._is_on = False
         self._pending = False
         self.async_write_ha_state()

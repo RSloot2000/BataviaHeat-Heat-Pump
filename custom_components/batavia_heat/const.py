@@ -922,6 +922,12 @@ COILS: dict[int, dict] = {
         # HR[912] bit 2 = hot water operating sign (0=off, 1=on)
         "state_register": {"type": "holding", "address": 912},
         "state_bit": 2,
+        # Cloud control address used instead of the coils when the entry is
+        # cloud-only (coils 1028/1029 are not exposed via the EcoHome API).
+        # getDeviceDetailV3 card switchAddress; verified by user gertehlers
+        # (issue #6, 2026-11-27): card 2 exposes switchAddress 1020 and its
+        # curSwitch follows enabling/disabling DHW in the EcoHome app.
+        "cloud_switch": 1020,
     },
 }
 
