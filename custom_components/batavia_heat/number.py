@@ -81,7 +81,8 @@ class BataviaHeatNumber(BataviaHeatEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set a new value."""
-        raw_value = int(value / self._scale) if self._scale != 1 else int(value)
+        # round() not int(): float division truncates (45.0 / 0.1 == 449.999…).
+        raw_value = round(value / self._scale)
         if self._reg_type == "cloud":
             await self.coordinator.async_cloud_set_value(self._address, raw_value)
         else:

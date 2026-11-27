@@ -402,11 +402,41 @@
       "cloud_pump_fault_info": {
         "name": "Pump fault info (cloud)"
       },
+      "cloud_module_1_plate_hx_water_inlet_temperature": {
+        "name": "Plate HX inlet temperature (module 1#)"
+      },
+      "cloud_module_1_plate_hx_water_outlet_temperature": {
+        "name": "Plate HX outlet temperature (module 1#)"
+      },
+      "cloud_module_1_pump_target_speed": {
+        "name": "Pump target speed (module 1#)"
+      },
+      "cloud_module_1_pump_flow_rate": {
+        "name": "Pump flow rate (module 1#)"
+      },
+      "cloud_module_1_pump_control_signal": {
+        "name": "Pump control signal (module 1#)"
+      },
+      "cloud_module_1_pump_feedback_signal": {
+        "name": "Pump feedback signal (module 1#)"
+      },
+      "cloud_module_1_pump_fault_info": {
+        "name": "Pump fault info (module 1#)"
+      },
       "cloud_outdoor_temperature_secondary": {
         "name": "Outdoor temperature secondary (cloud)"
       },
-      "temperature_unit": {
-        "name": "Temperature unit"
+      "system_room_temperature": {
+        "name": "Room temperature (system)"
+      },
+      "system_solar_temperature": {
+        "name": "Solar temperature"
+      },
+      "underfloor_heating_inlet_temperature": {
+        "name": "Underfloor heating inlet temperature"
+      },
+      "inverter_error_code": {
+        "name": "Inverter error code"
       }
     },
     "binary_sensor": {
@@ -415,6 +445,18 @@
       },
       "unit_power_state": {
         "name": "Unit power state"
+      },
+      "defrost_active": {
+        "name": "Defrosting active"
+      },
+      "compressor_fault": {
+        "name": "Compressor fault"
+      },
+      "unit_fault": {
+        "name": "Unit fault"
+      },
+      "system_fault": {
+        "name": "System fault"
       }
     },
     "number": {
@@ -571,6 +613,13 @@
           "continuous": "Continuous",
           "stop_at_temp": "Stop at temp",
           "intermittent": "Intermittent"
+        }
+      },
+      "temperature_unit": {
+        "name": "Temperature unit",
+        "state": {
+          "celsius": "Celsius",
+          "fahrenheit": "Fahrenheit"
         }
       },
       "pump_control_type": {

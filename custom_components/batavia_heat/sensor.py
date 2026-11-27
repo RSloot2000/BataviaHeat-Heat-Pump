@@ -364,9 +364,11 @@ class BataviaHeatSensor(BataviaHeatEntity, SensorEntity):
         val = self.coordinator.data.get(self._reg_type, {}).get(self._address)
         if val is None:
             return None
-        # Check for probe error range (e.g., DHW tank probe disconnected)
+        # Check for probe error range (e.g., DHW tank probe disconnected).
+        # The range is in SCALED units (as stored by the coordinator) and is
+        # normalised here so the declaration order cannot silently disable it.
         if self._probe_error_range and isinstance(val, (int, float)):
-            low, high = self._probe_error_range
+            low, high = sorted(self._probe_error_range)
             if low <= val <= high:
                 return None
         return val

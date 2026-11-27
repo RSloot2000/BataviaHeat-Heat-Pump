@@ -83,7 +83,10 @@ DEFAULT_OFFLOAD_DB_MAX_MB = 0
 DEFAULT_SCAN_INTERVAL = 10
 
 # Special marker values for disconnected sensors
-SENSOR_DISCONNECTED = (32834, 32836)  # 0x8042, 0x8044 → -3270.x°C
+# Raw 16-bit marker codes a probe sends when disconnected. Signed these are
+# -32703..-32700; with scale 0.1 they would display as -3270.3..-3270.0 °C.
+# All four codes must be listed — the coordinator drops them before scaling.
+SENSOR_DISCONNECTED = (32833, 32834, 32835, 32836)  # 0x8041-0x8044
 
 # === Register definitions ===
 # Discovered via Modbus scanner on 2026-03-15, cross-referenced with EcoHome App.
@@ -136,6 +139,10 @@ HOLDING_REGISTERS: dict[int, dict] = {
         # HR[912] bit 0 = unit power state (0=off, 1=on)
         # Note: HR[912] contains multiple bits; bit 0 is power, bit 2 is hot water.
         "state_bit": 0,
+        # BataviaHeat-only: on the Newntide R290 the same register (Run flag 0)
+        # has bit 0 = Zone A operating sign, not unit power (BP-MODBUS doc
+        # "Unit Info" 912). Exposing it there would report Zone A as power.
+        "register_map": REGISTER_MAP_BATAVIA,
     },
     913: {
         "name": "silent_mode_state",
@@ -219,6 +226,12 @@ HOLDING_REGISTERS: dict[int, dict] = {
         "scale": 1,
         "entity_type": "binary_sensor",
         "icon": "mdi:heat-pump",
+        # On the Newntide R290 this register is a bit-word (BP-MODBUS doc
+        # "04-Input and Output" 1283): B0 inverter compressor, B1 four-way
+        # valve, B2 liquid injection valve, B5/B7 crankcase heaters. Masking
+        # bit 0 keeps the sensor false while only a valve/heater bit is set.
+        # On BataviaHeat the register reads plain 0/1, so bit 0 is identical.
+        "state_bit": 0,
     },
 
     # ─── N-serie: System Configuration ───
@@ -750,8 +763,99 @@ INPUT_REGISTERS: dict[int, dict] = {
         "scale": 0.1,
         "entity_type": "sensor",
         "icon": "mdi:thermometer-water",
-        # Probe error values: -32700 to -32703 means disconnected
-        "probe_error_range": (-32700, -32703),
+        # Probe error values: -32700 to -32703 (raw) means disconnected.
+        # Given as SCALED values (what the coordinator stores) in ascending
+        # order — sensor.py compares against the scaled reading. Defense in
+        # depth: the coordinator already drops raw 32833-32836 via
+        # SENSOR_DISCONNECTED.
+        "probe_error_range": (-3270.3, -3270.0),
+    },
+
+    # ─── FC04 status / fault / system-info registers ───
+    # From the BP-MODBUS doc (references/BP-MODBUS_English-Version.md) — the
+    # definitive map for Newntide. Polling was extended to the batavia variant
+    # after a live ESP32 read (2026-11-27) self-discovered the same block on
+    # BataviaHeat hardware (inverter error 0, fault words 0, room temp 21.2 °C,
+    # 3355/3356 mirroring the HR[3230/3231] buffer temps). Points without a
+    # connected probe return the 32836 disconnected marker and auto-hide.
+    #
+    # 1042 = inverter Error Code (Unit Info block): 0 = no fault, otherwise
+    # the inverter fault code from the manufacturer's manual.
+    1042: {
+        "name": "inverter_error_code",
+        "device_class": None,
+        "unit": None,
+        "scale": 1,
+        "entity_type": "sensor",
+        "icon": "mdi:alert-outline",
+        "signed": False,
+    },
+    # 1289 = 0# module "Press status" bit-word; B13 = defrosting in progress.
+    1289: {
+        "name": "defrost_active",
+        "device_class": None,
+        "unit": None,
+        "scale": 1,
+        "entity_type": "binary_sensor",
+        "icon": "mdi:snowflake-melt",
+        "state_bit": 13,
+    },
+    # 1294 = 0# module "Compressor fault 1" bit-word — any bit set is a fault.
+    1294: {
+        "name": "compressor_fault",
+        "device_class": "problem",
+        "unit": None,
+        "scale": 1,
+        "entity_type": "binary_sensor",
+        "icon": "mdi:alert-circle-outline",
+    },
+    # 1298 = 0# module "Unit fault 1" bit-word — any bit set is a fault.
+    1298: {
+        "name": "unit_fault",
+        "device_class": "problem",
+        "unit": None,
+        "scale": 1,
+        "entity_type": "binary_sensor",
+        "icon": "mdi:alert-octagon-outline",
+    },
+    # 3331 = "System Relay Outputs" bit-word; B1 = fault indication.
+    # (B0 is the system defrost indication — module-level 1289 B13 above is
+    # more specific, so only the fault bit is surfaced here.)
+    3331: {
+        "name": "system_fault",
+        "device_class": "problem",
+        "unit": None,
+        "scale": 1,
+        "entity_type": "binary_sensor",
+        "icon": "mdi:alert-decagram-outline",
+        "state_bit": 1,
+    },
+    # 3348 = system "Room temperature" (0.1 °C).
+    3348: {
+        "name": "system_room_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 0.1,
+        "entity_type": "sensor",
+        "icon": "mdi:home-thermometer",
+    },
+    # 3354 = system "Solar temperature" (0.1 °C).
+    3354: {
+        "name": "system_solar_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 0.1,
+        "entity_type": "sensor",
+        "icon": "mdi:solar-power",
+    },
+    # 3362 = system "Underfloor heating inlet water temperature" (0.1 °C).
+    3362: {
+        "name": "underfloor_heating_inlet_temperature",
+        "device_class": "temperature",
+        "unit": "°C",
+        "scale": 0.1,
+        "entity_type": "sensor",
+        "icon": "mdi:heating-coil",
     },
 }
 
@@ -771,6 +875,17 @@ COILS: dict[int, dict] = {
         # Using state_bit ensures correct reading of only the power bit.
         "state_register": {"type": "holding", "address": 912},
         "state_bit": 0,
+        # On the Newntide R290 the unit power command is coils 0/1, and
+        # 1024/1025 are the Zone A on/off command coils (BP-MODBUS doc
+        # "User Operation Commands"). Bit 0 of 912 there is the Zone A
+        # operating sign, not unit power — so no state mirror is usable and
+        # the switch falls back to its RestoreEntity assumed state.
+        "newntide_override": {
+            "on_coil": 0,
+            "off_coil": 1,
+            "state_register": None,
+            "state_bit": None,
+        },
     },
     1073: {
         "name": "silent_mode",
@@ -813,6 +928,29 @@ COILS: dict[int, dict] = {
 # Discrete inputs (read-only boolean) - FC02
 # Not yet discovered. Needs dedicated discrete input scan.
 DISCRETE_INPUTS: dict[int, dict] = {}
+
+
+def resolve_coil_info(coil_addr: int, register_map: str) -> dict:
+    """Return the coil definition with the active variant's overrides merged.
+
+    Entries may carry a ``"<variant>_override"`` dict (e.g. ``newntide_override``)
+    whose keys replace the base definition for that register-map variant —
+    used where the same command has different coil addresses per hardware.
+    """
+    info = COILS[coil_addr]
+    return {**info, **info.get(f"{register_map}_override", {})}
+
+
+def variant_matches(reg_info: dict, register_map: str) -> bool:
+    """True when a register/coil definition applies to the active variant.
+
+    Definitions without a ``"register_map"`` key apply to every variant; ones
+    with it (e.g. the 912 unit-power mirror, which means something different
+    on Newntide) only apply to the named variant.
+    """
+    allowed = reg_info.get("register_map")
+    return allowed is None or allowed == register_map
+
 
 # Error code mapping (not yet identified)
 ERROR_CODES: dict[int, str] = {}
@@ -1059,7 +1197,9 @@ CLOUD_REGISTERS: dict[int, dict] = {
         "unit": "°C",
         "scale": 1,
         "entity_type": "sensor",
-        "cloud_unique": True,
+        "cloud_unique": False,
+        # Modbus counterpart on the Newntide map (IR[3354], FC04).
+        "modbus_name": "system_solar_temperature",
         "icon": "mdi:solar-power",
     },
     2111: {
@@ -1068,7 +1208,9 @@ CLOUD_REGISTERS: dict[int, dict] = {
         "unit": "°C",
         "scale": 1,
         "entity_type": "sensor",
-        "cloud_unique": True,
+        "cloud_unique": False,
+        # Modbus counterpart on the Newntide map (IR[3362], FC04).
+        "modbus_name": "underfloor_heating_inlet_temperature",
         "icon": "mdi:heating-coil",
     },
     2195: {

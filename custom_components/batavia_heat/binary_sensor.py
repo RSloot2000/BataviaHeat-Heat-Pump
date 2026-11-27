@@ -9,7 +9,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DISCRETE_INPUTS, DOMAIN, HOLDING_REGISTERS
+from .const import (
+    DISCRETE_INPUTS,
+    DOMAIN,
+    HOLDING_REGISTERS,
+    INPUT_REGISTERS,
+    variant_matches,
+)
 from .coordinator import BataviaHeatCoordinator
 from .entity import BataviaHeatEntity
 
@@ -29,6 +35,7 @@ async def async_setup_entry(
     """Set up BataviaHeat binary sensor entities."""
     coordinator: BataviaHeatCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[BataviaHeatBinarySensor] = []
+    register_map = coordinator.register_map
 
     for addr, reg_info in DISCRETE_INPUTS.items():
         if reg_info.get("entity_type") == "binary_sensor":
@@ -41,10 +48,25 @@ async def async_setup_entry(
     # Binary sensors from holding registers (e.g. compressor ON/OFF)
     for addr, reg_info in HOLDING_REGISTERS.items():
         if reg_info.get("entity_type") == "binary_sensor":
+            if not variant_matches(reg_info, register_map):
+                continue
             if not coordinator._is_address_read("holding", addr):
                 continue
             entities.append(
                 BataviaHeatBinarySensor(coordinator, "holding", addr, reg_info)
+            )
+
+    # Binary sensors from input registers (e.g. defrost/fault bit-words).
+    # These addresses are polled by both variants (self-discovered on
+    # BataviaHeat 2026-11-27), so they appear everywhere the read succeeds.
+    for addr, reg_info in INPUT_REGISTERS.items():
+        if reg_info.get("entity_type") == "binary_sensor":
+            if not variant_matches(reg_info, register_map):
+                continue
+            if not coordinator._is_address_read("input", addr):
+                continue
+            entities.append(
+                BataviaHeatBinarySensor(coordinator, "input", addr, reg_info)
             )
 
     async_add_entities(entities)

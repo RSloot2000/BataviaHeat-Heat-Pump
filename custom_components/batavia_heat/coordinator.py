@@ -14,7 +14,7 @@ import asyncio
 import logging
 import random
 import struct
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from pymodbus.client import ModbusSerialClient, ModbusTcpClient
@@ -62,6 +62,12 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Exponential backoff bounds for cloud re-auth attempts while the cloud is
+# down: 60 s doubling up to 15 min, so a dead backend never becomes a login
+# request every poll cycle (risk of account lockout).
+_CLOUD_RETRY_BASE_SECONDS = 60
+_CLOUD_RETRY_MAX_SECONDS = 900
+
 # ── Read group definitions ──
 # Split by function code — FC03≠FC04 for addresses 135+.
 
@@ -97,6 +103,18 @@ _INPUT_READ_GROUPS: list[tuple[int, int]] = [
     (66, 1),      # IR[66]: pump control signal
     (135, 8),     # IR[135-142]: HX temps, module temps, pump feedback
     (3351, 1),    # IR[3351]: DHW tank temperature (Newntide R290)
+    # Self-discovered 2026-11-27 via live ESP32 read on BataviaHeat hardware:
+    # the unit answers the whole BP-MODBUS status block. 1042 read 0 (no
+    # inverter fault), 1294-1298 all 0 (healthy), 3348 = 21.2 C room temp,
+    # 3355/3356 mirror HR[3230/3231] buffer temps. Bit meanings of the
+    # defrost/fault words are same-family inferences pending a live event;
+    # 3363-3365 hold temperature-like values here (NOT valve states), so no
+    # entities are defined for them.
+    (1042, 1),    # IR[1042]: inverter error code (0 = no fault)
+    (1289, 1),    # IR[1289]: press status bit-word (B13 = defrosting)
+    (1294, 5),    # IR[1294-1298]: compressor/unit fault bit-words
+    (3331, 1),    # IR[3331]: system relay outputs (B1 = fault indication)
+    (3348, 18),   # IR[3348-3365]: system info block (room/solar/underfloor)
 ]
 
 # ── Register-map variants (issue #5) ─────────────────────────────────────
@@ -126,7 +144,13 @@ _BATAVIA_READ_GROUPS: list[tuple[int, int, int, None]] = [
 #   IR[1310-1311] low/high pressure  → input[32, 33]
 #   IR[1352-1355] pump telemetry      → input[53, 54, 66, 142]
 #   FC04[912-913] run flags 0/1       → holding[912, 913] (entity mirrors)
-# The remaining groups read fine on Newntide and keep remap=None.
+#   FC04[3355-3356] buffer top/bottom → holding[3230, 3231] (entity mirrors)
+# (Note: 912 bit 0 is the Zone A operating sign on this hardware, not unit
+# power — the entities that read it are variant-gated in const.py.)
+# The remaining FC03 groups read fine on Newntide and keep remap=None. The
+# extra FC04 groups (1042, 1289, 1294-1298, 3331, 3348-3365) expose the doc's
+# inverter error code, defrost/fault bit-words and system-info block; since
+# the 2026-11-27 live discovery they are polled on both variants.
 _NEWNTIDE_READ_GROUPS: list[tuple[int, int, int, list[tuple[str, int]] | None]] = [
     # FC04 — input registers (live sensor data; corrected addresses)
     (4, 22, 4, None),  # IR[22-25]: ambient/fin/suction/discharge temps (reads fine)
@@ -134,6 +158,12 @@ _NEWNTIDE_READ_GROUPS: list[tuple[int, int, int, list[tuple[str, int]] | None]] 
     (4, 1352, 4, [("input", 53), ("input", 54), ("input", 66), ("input", 142)]),  # pump telemetry
     (4, 912, 2, [("holding", 912), ("holding", 913)]),  # run flags 0/1 (mirrors)
     (4, 3351, 1, None),  # IR[3351]: DHW tank temperature (newntide)
+    (4, 1042, 1, None),  # IR[1042]: inverter error code (0 = no fault)
+    (4, 1289, 1, None),  # IR[1289]: 0# module press status (B13 = defrosting)
+    (4, 1294, 5, None),  # IR[1294-1298]: 0# module compressor/unit fault bit-words
+    (4, 3331, 1, None),  # IR[3331]: system relay outputs (B1 = fault indication)
+    (4, 3348, 18, None),  # IR[3348-3365]: system info block (room/solar/underfloor)
+    (4, 3355, 2, [("holding", 3230), ("holding", 3231)]),  # buffer top/bottom
     # FC03 — holding registers (read fine on Newntide; standard decode)
     (3, 768, 1, None),     # operational status
     (3, 772, 1, None),     # heating target setpoint
@@ -141,7 +171,6 @@ _NEWNTIDE_READ_GROUPS: list[tuple[int, int, int, list[tuple[str, int]] | None]] 
     (3, 776, 1, None),     # water outlet temperature
     (3, 1283, 1, None),    # compressor running
     (3, 1348, 3, None),    # plate HX water temps + total water outlet
-    (3, 3230, 2, None),    # buffer inlet/outlet temperatures
     (3, 6400, 1, None),    # working mode
     (3, 6401, 8, None),    # cool/heat setpoints + room targets + zone B
     (3, 6425, 12, None),   # zone A/B curves + cool/heat custom curve pts
@@ -262,6 +291,9 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._cloud_device_code: str = ""
         self._cloud_active: bool = False
         self._cloud_failures: int = 0
+        # Exponential backoff state for re-auth while cloud is down.
+        self._cloud_retry_backoff: int = 0
+        self._cloud_retry_after: datetime | None = None
         self._modbus_enabled: bool = False
         self._modbus_connection_type: str = CONNECTION_TCP
 
@@ -323,6 +355,15 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         elif modbus_type in (CONNECTION_TCP, CONNECTION_ESP32):
             self._host = _opt(CONF_HOST, "")
             self._tcp_port = _opt(CONF_TCP_PORT, 502)
+
+    @property
+    def register_map(self) -> str:
+        """Active register-map variant ("batavia" or "newntide").
+
+        Platforms use this to pick per-variant coil addresses and to skip
+        entities whose register means something different on this hardware.
+        """
+        return self._register_map
 
     @property
     def _effective_modbus_type(self) -> str:
@@ -739,6 +780,9 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # collisions don't keep resynchronizing with another master's
             # periodic polling.
             backoff_pending = 0.0
+            # Set when reads stop early because a user write needs the bus.
+            # An empty result set caused by yielding is not a device failure.
+            write_yielded = False
 
             for _cycle in range(max_cycles):
                 if not pending:
@@ -751,6 +795,7 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         "Write pending — yielding bus lock (%d groups remain)",
                         len(pending),
                     )
+                    write_yielded = True
                     break
 
                 # Back off (jittered) before retrying groups that failed last
@@ -778,6 +823,7 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     # Re-check write_pending between each register group
                     if self._write_pending > 0:
                         _LOGGER.debug("Write pending mid-cycle — stopping reads early")
+                        write_yielded = True
                         break
                     fc, start, count, remap = groups[idx]
                     pending[idx] += 1
@@ -820,6 +866,17 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.debug(
                     "Deferred %d register groups (write pending or max retries)",
                     len(pending),
+                )
+
+            # Nothing read at all (and not because we yielded the bus for a
+            # write) means the device is unreachable or off the bus. Report a
+            # failed update instead of an empty "success" — otherwise every
+            # entity silently goes unavailable and the auto-hide logic starts
+            # hiding the entire device after enough empty polls.
+            if not results and not write_yielded:
+                raise UpdateFailed(
+                    "No register groups could be read — device unreachable "
+                    "or not responding on the bus"
                 )
 
             return data
@@ -952,40 +1009,13 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._esp32_client
 
     def _read_all_registers_esp32(self) -> dict[str, Any]:
-        """Read all registers via ESP32 proxy (standard pymodbus TCP)."""
-        client = self._get_esp32_client()
-        data: dict[str, Any] = {
-            "holding": {},
-            "input": {},
-            "coil": {},
-            "discrete": {},
-        }
+        """Read all registers via ESP32 proxy (standard pymodbus TCP).
 
-        for start_addr, count in _HOLDING_READ_GROUPS:
-            try:
-                result = client.read_holding_registers(
-                    start_addr, count=count, device_id=self._slave_id,
-                )
-                if result.isError():
-                    _LOGGER.debug("Error reading HR[%d..%d]: %s", start_addr, start_addr + count - 1, result)
-                    continue
-                self._process_registers(data, start_addr, result.registers)
-            except ModbusException as err:
-                _LOGGER.debug("Modbus error HR[%d..%d]: %s", start_addr, start_addr + count - 1, err)
-
-        for start_addr, count in _INPUT_READ_GROUPS:
-            try:
-                result = client.read_input_registers(
-                    start_addr, count=count, device_id=self._slave_id,
-                )
-                if result.isError():
-                    _LOGGER.debug("Error reading IR[%d..%d]: %s", start_addr, start_addr + count - 1, result)
-                    continue
-                self._process_registers(data, start_addr, result.registers)
-            except ModbusException as err:
-                _LOGGER.debug("Modbus error IR[%d..%d]: %s", start_addr, start_addr + count - 1, err)
-
-        return data
+        Delegates to the shared variant-aware reader (same as serial) so the
+        configured register-map variant — including FC04-dispatched remapped
+        groups such as the Newntide run-flag mirrors — is honoured.
+        """
+        return self._read_all_registers_variant(self._get_esp32_client())
 
     def _reset_esp32_client(self) -> None:
         """Force-close the ESP32 TCP client."""
@@ -1288,14 +1318,30 @@ class BataviaHeatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     CLOUD_FAILURE_THRESHOLD,
                 )
         else:
-            # Attempt to restore the cloud connection in the background.
-            try:
-                await self._cloud.authenticate()
-                self._cloud_active = True
-                self._cloud_failures = 0
-                _LOGGER.info("Cloud connection restored")
-            except Exception:  # noqa: BLE001
-                pass  # Will retry next cycle
+            # Attempt to restore the cloud connection with exponential backoff
+            # (60 s doubling to 15 min max) so a dead backend is not hit with
+            # a login request on every poll cycle.
+            now = dt_util.utcnow()
+            if self._cloud_retry_after is None or now >= self._cloud_retry_after:
+                try:
+                    await self._cloud.authenticate()
+                    self._cloud_active = True
+                    self._cloud_failures = 0
+                    self._cloud_retry_backoff = 0
+                    self._cloud_retry_after = None
+                    _LOGGER.info("Cloud connection restored")
+                except Exception as err:  # noqa: BLE001
+                    self._cloud_retry_backoff += 1
+                    delay = min(
+                        _CLOUD_RETRY_BASE_SECONDS
+                        * (2 ** (self._cloud_retry_backoff - 1)),
+                        _CLOUD_RETRY_MAX_SECONDS,
+                    )
+                    self._cloud_retry_after = now + timedelta(seconds=delay)
+                    _LOGGER.debug(
+                        "Cloud restore attempt failed (%s) — next try in %ds",
+                        err, delay,
+                    )
 
         # ── Device on/off + operation mode (getDeviceDetailV3) ────────────────
         # These control values are not in paramListV3; merge them into the

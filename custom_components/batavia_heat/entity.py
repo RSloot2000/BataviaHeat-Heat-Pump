@@ -7,10 +7,6 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    CONNECTION_CLOUD,
-    CONNECTION_ESP32,
-    CONNECTION_SERIAL,
-    CONNECTION_TCP,
     DOMAIN,
     MANUFACTURER,
     MODEL,

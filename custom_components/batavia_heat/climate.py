@@ -15,15 +15,23 @@ from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONNECTION_CLOUD, CLOUD_CTRL_ADDRESSES, DOMAIN, MANUFACTURER, MODEL
+from .const import (
+    CONNECTION_CLOUD,
+    CLOUD_CTRL_ADDRESSES,
+    DOMAIN,
+    REGISTER_MAP_NEWNTIDE,
+    resolve_coil_info,
+)
 from .coordinator import BataviaHeatCoordinator
 from .entity import BataviaHeatEntity
 
 _LOGGER = logging.getLogger(__name__)
 
-# Coil addresses for unit on/off (pulse-based, FC05)
-COIL_UNIT_ON = 1024
-COIL_UNIT_OFF = 1025
+# Coil addresses for unit on/off (pulse-based, FC05). BataviaHeat uses
+# 1024/1025; on the Newntide R290 those are the Zone A command coils and the
+# unit power command is coils 0/1 (BP-MODBUS doc "User Operation Commands").
+# The effective pair is resolved per register-map variant (const.COILS).
+_UNIT_POWER_COIL_ADDR = 1024
 
 # Register addresses
 REG_TARGET_TEMP = 772     # HR[772]: Calculated heating curve setpoint (°C, scale=0.1)
@@ -86,6 +94,10 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
             "name": "climate",
             "icon": "mdi:heat-pump",
         })
+        # Per-variant unit power coils (batavia 1024/1025, newntide 0/1).
+        coil_info = resolve_coil_info(_UNIT_POWER_COIL_ADDR, coordinator.register_map)
+        self._coil_on: int = coil_info["on_coil"]
+        self._coil_off: int = coil_info["off_coil"]
         # The base entity sets translation_key to "climate", but the only climate
         # translation lives under entity.climate.heat_pump. Point at it so the
         # name resolves from translations (and stays translatable to nl).
@@ -96,6 +108,23 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
             | ClimateEntityFeature.TURN_ON
             | ClimateEntityFeature.TURN_OFF
         )
+
+    @property
+    def available(self) -> bool:
+        """Available when Modbus or the cloud reports state.
+
+        The base class gates availability on the holding register (HR[768])
+        being present, but a cloud-only entry never fills the holding bucket.
+        Fall back to the cloud control addresses (power/mode) so the entity
+        works when only the cloud connection is configured.
+        """
+        if not self.coordinator.last_update_success or self.coordinator.data is None:
+            return False
+        data = self.coordinator.data
+        if self._address in data.get(self._reg_type, {}):
+            return True
+        cloud = data.get("cloud", {})
+        return CLOUD_POWER_ADDRESS in cloud or CLOUD_MODE_ADDRESS in cloud
 
     @property
     def _use_cloud_control(self) -> bool:
@@ -153,7 +182,11 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
         val = self.coordinator.data.get("holding", {}).get(REG_CURRENT_TEMP)
         if val is None:
             cloud = self.coordinator.data.get("cloud", {})
-            val = cloud.get(2189) or cloud.get(2106)
+            # Explicit None checks: a legitimate 0.0 reading must not fall
+            # through to the next source the way `a or b` would.
+            val = cloud.get(2189)
+            if val is None:
+                val = cloud.get(2106)
         return val
 
     @property
@@ -180,15 +213,18 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
         """Return True if the unit is powered on.
 
         Uses the Modbus power mirror (HR[912] bit 0, fallback HR[768]); falls back to
-        the cloud power state (address 1017) when Modbus is absent.
+        the cloud power state (address 1017) when Modbus is absent. On the
+        Newntide map HR[912] bit 0 is the Zone A operating sign, not unit
+        power, so it is skipped there and the status register is used instead.
         """
         if self.coordinator.data is None:
             return False
         holding = self.coordinator.data.get("holding", {})
-        power = holding.get(REG_POWER_STATE)
-        if power is not None:
-            # HR[912] contains multiple bits; bit 0 is power state
-            return bool(power & 1)
+        if self.coordinator.register_map != REGISTER_MAP_NEWNTIDE:
+            power = holding.get(REG_POWER_STATE)
+            if power is not None:
+                # HR[912] contains multiple bits; bit 0 is power state
+                return bool(power & 1)
         status = holding.get(REG_OP_STATUS)
         if status is not None:
             return status > 0
@@ -212,7 +248,11 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
             return HVACAction.OFF
         holding = self.coordinator.data.get("holding", {})
         running = holding.get(REG_COMPRESSOR)
-        if running is None:
+        if running is not None:
+            # 1283 is a bit-word on Newntide (B0 = compressor); masking bit 0
+            # is identical for the plain 0/1 values BataviaHeat reports.
+            running = bool(running & 1)
+        else:
             speed = self.coordinator.data.get("cloud", {}).get(CLOUD_COMPRESSOR_SPEED)
             running = bool(speed and speed > 0)
         if not running:
@@ -265,26 +305,26 @@ class BataviaHeatClimate(BataviaHeatEntity, ClimateEntity):
                 await self.coordinator.async_cloud_set_switch(CLOUD_POWER_ADDRESS, True)
             return
         if hvac_mode == HVACMode.OFF:
-            await self.coordinator.async_write_coil(COIL_UNIT_OFF, True)
+            await self.coordinator.async_write_coil(self._coil_off, True)
             return
         if (mode := _HVAC_TO_MODE.get(hvac_mode)) is not None:
             await self.coordinator.async_write_register(REG_WORKING_MODE, mode)
         if not self._is_unit_on:
-            await self.coordinator.async_write_coil(COIL_UNIT_ON, True)
+            await self.coordinator.async_write_coil(self._coil_on, True)
 
     async def async_turn_on(self) -> None:
         """Power the unit on (separate from working mode)."""
         if self._use_cloud_control:
             await self.coordinator.async_cloud_set_switch(CLOUD_POWER_ADDRESS, True)
             return
-        await self.coordinator.async_write_coil(COIL_UNIT_ON, True)
+        await self.coordinator.async_write_coil(self._coil_on, True)
 
     async def async_turn_off(self) -> None:
         """Power the unit off (separate from working mode)."""
         if self._use_cloud_control:
             await self.coordinator.async_cloud_set_switch(CLOUD_POWER_ADDRESS, False)
             return
-        await self.coordinator.async_write_coil(COIL_UNIT_OFF, True)
+        await self.coordinator.async_write_coil(self._coil_off, True)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set the power mode (HR[6465]) from a preset."""

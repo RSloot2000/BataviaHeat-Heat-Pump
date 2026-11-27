@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import COILS, DOMAIN
+from .const import CONNECTION_CLOUD, COILS, DOMAIN, resolve_coil_info, variant_matches
 from .coordinator import BataviaHeatCoordinator
 from .entity import BataviaHeatEntity
 
@@ -26,7 +26,22 @@ async def async_setup_entry(
     coordinator: BataviaHeatCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: dict[int, BataviaHeatSwitch] = {}
 
-    for addr, reg_info in COILS.items():
+    # Coil switches write FC05 pulses — they need a Modbus connection. In a
+    # cloud-only entry every toggle would fail, so don't create dead entities.
+    entry_data = coordinator.config_entry.data
+    if entry_data.get("connection_type") == CONNECTION_CLOUD and not entry_data.get(
+        "modbus_enabled", False
+    ):
+        _LOGGER.debug("Cloud-only entry — skipping coil switches")
+        return
+
+    register_map = coordinator.register_map
+    for addr, base_info in COILS.items():
+        if not variant_matches(base_info, register_map):
+            continue
+        # Merge per-variant coil overrides (e.g. Newntide unit power is coils
+        # 0/1, not 1024/1025 which are its Zone A command coils).
+        reg_info = resolve_coil_info(addr, register_map)
         if reg_info.get("entity_type") == "switch":
             entities[addr] = BataviaHeatSwitch(coordinator, addr, reg_info)
 
